@@ -1,0 +1,51 @@
+# Logs
+logs/
+backend/logs/
+frontend/logs/
+
+# Dependencies
+node_modules/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+config.json
+backend/config.json
+
+# Build output
+frontend/dist/
+frontend/build/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE specific
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

@@ -1,0 +1,60 @@
+/* History Page Styles */
+.history-page {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.history-page.empty-state {
+  text-align: center;
+  padding: var(--spacing-3xl);
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.history-card {
+  background: var(--bg-secondary);
+  border: 2px solid var(--border-light);
+  border-radius: var(--radius-xl);
+  padding: var(--spacing-6);
+  cursor: pointer;
+  transition: var(--transition-base);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.history-card:hover {
+  border-color: var(--spark-purple);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(4px);
+}
+
+.history-info h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: var(--spacing-xs);
+  color: var(--text-primary);
+}
+
+.history-info p {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.history-date {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 13px;
+  color: var(--text-tertiary);
+}

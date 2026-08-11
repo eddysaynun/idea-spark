@@ -1,0 +1,13 @@
+{
+  "name": "idea-generator",
+  "version": "2.0.0",
+  "description": "AI-powered idea generator with agent framework",
+  "main": "backend/app.py",
+  "scripts": {
+    "start": "python backend/app.py",
+    "dev": "python backend/app.py --dev"
+  },
+  "keywords": ["ai", "ideas", "agent", "generator"],
+  "author": "Edward",
+  "license": "MIT"
+}
