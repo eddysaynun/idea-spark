@@ -1,4 +1,4 @@
-# Idea Generator - 最终交付报告
+# Idea Spark - 最终交付报告
 
 ## ✅ 完成状态
 
@@ -53,7 +53,7 @@
 ## 📁 最终项目结构
 
 ```
-idea-generator/
+idea-spark/
 ├── backend/
 │   ├── app.py                          # FastAPI 入口 ✅
 │   ├── config.json                     # 配置文件 (gitignore) ✅
@@ -112,7 +112,7 @@ idea-generator/
 
 ### 一键启动
 ```bash
-cd /Users/edward/workspace/edward/idea-generator
+cd /Users/edward/workspace/edward/idea-spark
 ./start.sh
 ```
 
@@ -202,7 +202,7 @@ cd frontend && npm run dev
 
 **状态**: ✅ **可交付**
 
-Idea Generator 已达到专业级产品标准：
+Idea Spark 已达到专业级产品标准：
 1. **UI/UX**: Apple 风格设计，用户体验优秀
 2. **功能**: 完整的 Ideas 生成链路
 3. **架构**: 清晰的分层架构，易于维护扩展

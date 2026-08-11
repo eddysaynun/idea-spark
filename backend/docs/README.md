@@ -1,4 +1,4 @@
-# Idea Generator 后端开发规范
+# Idea Spark 后端开发规范
 
 ## 📁 项目结构
 

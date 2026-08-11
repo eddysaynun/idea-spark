@@ -35,7 +35,7 @@ const WelcomePage = ({ onGetStarted }) => {
       <div className="hero-section">
         <div className="hero-badge">
           <Sparkles size={16} />
-          <span>AI-Powered Idea Generator</span>
+          <span>AI-Powered Idea Spark</span>
         </div>
         
         <h1 className="hero-title">

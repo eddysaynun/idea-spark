@@ -1,5 +1,5 @@
 """
-Idea Generator Agent Framework
+Idea Spark Agent Framework
 提供智能 Ideas 生成和详细方案设计的 Agent 系统
 """
 

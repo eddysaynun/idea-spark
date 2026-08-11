@@ -1,5 +1,5 @@
 {
-  "name": "idea-generator",
+  "name": "idea-spark",
   "version": "2.0.0",
   "description": "AI-powered idea generator with agent framework",
   "main": "backend/app.py",

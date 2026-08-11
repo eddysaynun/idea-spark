@@ -1,7 +1,7 @@
-# Idea Generator - 产品优化计划
+# Idea Spark - 产品优化计划
 
 ## 🎯 目标
-将 Idea Generator 打造为专业级、可交付的产品，达到 Apple/Codex 级别的用户体验。
+将 Idea Spark 打造为专业级、可交付的产品，达到 Apple/Codex 级别的用户体验。
 
 ## 📋 优化清单
 

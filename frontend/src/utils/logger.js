@@ -88,7 +88,7 @@ class Logger {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `idea-generator-frontend-${new Date().toISOString().split('T')[0]}.log`;
+    a.download = `idea-spark-frontend-${new Date().toISOString().split('T')[0]}.log`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -107,7 +107,7 @@ export async function saveLogsToFile() {
     const blob = new Blob([logs], { type: 'application/json' });
     
     // 使用 Fetch API 保存到本地存储
-    const filename = `idea-generator-frontend-${new Date().toISOString().split('T')[0]}.log`;
+    const filename = `idea-spark-frontend-${new Date().toISOString().split('T')[0]}.log`;
     
     // 触发下载
     const url = URL.createObjectURL(blob);

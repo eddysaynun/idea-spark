@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Idea Generator - 一键启动脚本 (使用 uv)
+# Idea Spark - 一键启动脚本 (使用 uv)
 # 同时启动前端和后端服务
 
 set -e
@@ -23,7 +23,7 @@ FRONTEND_PORT=3000
 
 echo ""
 echo "╔════════════════════════════════════════════════════════╗"
-echo "║         🚀 Idea Generator - 一键启动脚本 (uv)         ║"
+echo "║         🚀 Idea Spark - 一键启动脚本 (uv)         ║"
 echo "╚════════════════════════════════════════════════════════╝"
 echo ""
 

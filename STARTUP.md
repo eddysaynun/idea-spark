@@ -1,11 +1,11 @@
-# 🚀 Idea Generator - 启动指南
+# 🚀 Idea Spark - 启动指南
 
 ## 快速启动
 
 ### 方式一：一键启动脚本（推荐）
 
 ```bash
-cd /Users/edward/workspace/edward/idea-generator
+cd /Users/edward/workspace/edward/idea-spark
 chmod +x start.sh
 ./start.sh
 ```
@@ -77,7 +77,7 @@ source $HOME/.local/bin/env
 ## 项目结构
 
 ```
-idea-generator/
+idea-spark/
 ├── start.sh              # 一键启动脚本
 ├── backend/              # Python FastAPI 后端
 │   ├── app.py           # 主应用

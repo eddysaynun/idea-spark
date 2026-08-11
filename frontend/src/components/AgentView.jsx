@@ -24,7 +24,7 @@ const AgentView = () => {
       <div className="page-head-bar">
         <div>
           <div className="eyebrow">IDEA GENERATOR</div>
-          <h2>Idea Generator</h2>
+          <h2>Idea Spark</h2>
           <div className="muted">
             输入方向，生成可变现的项目 Ideas，点击下钻查看详细方案
           </div>

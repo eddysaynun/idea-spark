@@ -1,5 +1,5 @@
 """
-FastAPI Application - Idea Generator Backend
+FastAPI Application - Idea Spark Backend
 """
 
 import logging
@@ -28,9 +28,9 @@ sessions = {}
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 初始化日志系统
-    setup_logging("idea-generator")
+    setup_logging("idea-spark")
     
-    logger.info("🚀 Idea Generator Server starting...")
+    logger.info("🚀 Idea Spark Server starting...")
     
     # 加载配置
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -56,11 +56,11 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    logger.info("👋 Idea Generator Server shutting down...")
+    logger.info("👋 Idea Spark Server shutting down...")
 
 # 创建 FastAPI 应用
 app = FastAPI(
-    title="Idea Generator API",
+    title="Idea Spark API",
     description="AI-powered idea generation service",
     version="2.0.0",
     lifespan=lifespan
