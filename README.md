@@ -40,7 +40,7 @@ Idea Spark 是一个面向独立开发者与小团队的机会探索工作台：
 
 ## 本地启动
 
-前置要求：Node.js、npm、Python 3.8+、[uv](https://docs.astral.sh/uv/)。
+前置要求：Node.js、npm、Python 3.13+、[uv](https://docs.astral.sh/uv/)。
 
 ```bash
 cd frontend
@@ -80,6 +80,17 @@ IDEA_SPARK_MODEL_TIMEOUT=600
 ```
 
 生产环境应通过平台 Secret/密钥管理器注入这些值，不要写进镜像或仓库。运行时只允许选择已配置的默认模型或 `/models` 探测到的模型，避免客户端传入任意模型名。
+
+## Cloudflare 部署
+
+仓库内置 Cloudflare Python Worker 配置，把 React 静态资产与 FastAPI `/api` 作为一个同源应用部署。`main` push 由 Cloudflare Workers Builds 自动构建并发布到 `idea-spark.heyedwardchen.com`。
+
+- Root directory：`backend`
+- Build command：`npm --prefix ../frontend ci && npm --prefix ../frontend run build`
+- Deploy command：`uv run pywrangler deploy`
+- Runtime secrets：`IDEA_SPARK_ADMIN_TOKEN`、模型 Base URL、模型名与 API Key
+
+敏感值只配置在 Cloudflare Worker 的 Variables & Secrets 中；仓库与构建变量中不保存明文密钥。Python Workers 目前仍处于 Cloudflare open beta，生产使用前应持续关注运行时兼容性与限制。
 
 ## 质量门禁
 

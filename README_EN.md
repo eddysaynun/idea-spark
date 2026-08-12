@@ -40,7 +40,7 @@ Model judgments are not verified market facts. The UI separates `evidence`, `ass
 
 ## Local setup
 
-Requirements: Node.js, npm, Python 3.8+, and [uv](https://docs.astral.sh/uv/).
+Requirements: Node.js, npm, Python 3.13+, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 cd frontend
@@ -74,6 +74,17 @@ IDEA_SPARK_MODEL_TIMEOUT=600
 ```
 
 Public deployments must set `IDEA_SPARK_ADMIN_TOKEN`. Configuration reads, updates, and remote model discovery require `X-Admin-Token`; without a token those endpoints only accept local requests.
+
+## Cloudflare deployment
+
+The repository includes a Cloudflare Python Worker configuration that serves the React assets and FastAPI `/api` as one same-origin application. Cloudflare Workers Builds deploys every `main` push to `idea-spark.heyedwardchen.com`.
+
+- Root directory: `backend`
+- Build command: `npm --prefix ../frontend ci && npm --prefix ../frontend run build`
+- Deploy command: `uv run pywrangler deploy`
+- Runtime secrets: admin token, model Base URL, model name, and API key
+
+Keep secret values in Cloudflare Worker Variables & Secrets, never in the repository or build variables. Cloudflare Python Workers are currently in open beta, so production use should continue to track runtime compatibility and limits.
 
 ## Quality gate
 

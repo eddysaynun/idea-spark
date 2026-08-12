@@ -8,6 +8,9 @@ node_modules/
 backend/__pycache__/
 backend/**/__pycache__/
 backend/.venv/
+backend/.venv-workers/
+backend/python_modules/
+backend/pylock.toml
 *.pyc
 *.pyo
 *.pyd
@@ -32,6 +35,9 @@ backend/config.json
 # Build output
 frontend/dist/
 frontend/build/
+.wrangler/
+.dev.vars*
+!.dev.vars.example
 *.log
 
 # OS

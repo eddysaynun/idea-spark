@@ -20,13 +20,18 @@ def require_config_admin(
     x_admin_token: Optional[str] = Header(default=None),
 ) -> None:
     """公网必须使用管理员令牌；未配置令牌时仅允许本机访问。"""
-    expected = os.environ.get("IDEA_SPARK_ADMIN_TOKEN", "")
+    expected = getattr(request.app.state, "admin_token", None)
+    if expected is None:
+        expected = os.environ.get("IDEA_SPARK_ADMIN_TOKEN", "")
     if expected:
         if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
             raise HTTPException(status_code=401, detail="管理员令牌无效")
         return
 
     client_host = request.client.host if request.client else ""
+    if not client_host:
+        cf_connecting_ip = request.headers.get("CF-Connecting-IP", "")
+        client_host = "127.0.0.1" if cf_connecting_ip in {"127.0.0.1", "::1"} else cf_connecting_ip
     if client_host not in {"127.0.0.1", "::1", "testclient"}:
         raise HTTPException(
             status_code=503,

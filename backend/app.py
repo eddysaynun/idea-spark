@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 
 from services.models.model_client import ModelClient, ModelConfig
 from routers.config_router import router as config_router
@@ -50,6 +49,55 @@ def load_model_config_from_env() -> ModelConfig:
 
     return config
 
+
+def load_model_config_from_bindings(env) -> ModelConfig:
+    """从 Cloudflare Worker 绑定初始化配置，不进行持久化。"""
+    config = ModelConfig()
+    string_fields = {
+        "base_url": "IDEA_SPARK_MODEL_BASE_URL",
+        "model": "IDEA_SPARK_MODEL_NAME",
+        "api_key": "IDEA_SPARK_MODEL_API_KEY",
+    }
+    for field_name, binding_name in string_fields.items():
+        value = getattr(env, binding_name, None)
+        if value is not None:
+            setattr(config, field_name, str(value))
+
+    numeric_fields = {
+        "temperature": ("IDEA_SPARK_MODEL_TEMPERATURE", float),
+        "max_tokens": ("IDEA_SPARK_MODEL_MAX_TOKENS", int),
+        "timeout": ("IDEA_SPARK_MODEL_TIMEOUT", int),
+    }
+    for field_name, (binding_name, converter) in numeric_fields.items():
+        value = getattr(env, binding_name, None)
+        if value is None:
+            continue
+        try:
+            setattr(config, field_name, converter(value))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid numeric Worker binding: %s", binding_name)
+
+    return config
+
+
+async def initialize_application(app: FastAPI, env=None) -> None:
+    """幂等初始化本地 ASGI 与 Cloudflare Worker 共用的应用状态。"""
+    if getattr(app.state, "idea_service", None) is not None:
+        return
+    config = load_model_config_from_bindings(env) if env is not None else load_model_config_from_env()
+    app.state.model_config = config
+    app.state.admin_token = (
+        str(getattr(env, "IDEA_SPARK_ADMIN_TOKEN", ""))
+        if env is not None
+        else os.environ.get("IDEA_SPARK_ADMIN_TOKEN", "")
+    )
+    app.state.model_client = ModelClient(config)
+
+    from services.idea_service import IdeaService
+
+    app.state.idea_service = IdeaService(app.state.model_client)
+    logger.info("IdeaService initialized with model %s", config.model)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -58,20 +106,16 @@ async def lifespan(app: FastAPI):
     
     logger.info("🚀 Idea Spark Server starting...")
     
-    # 只从环境变量初始化；运行时修改仅保存在当前进程内存中。
-    app.state.model_config = load_model_config_from_env()
-    
-    app.state.model_client = ModelClient(app.state.model_config)
-    logger.info("🔧 Default model: %s", app.state.model_config.model)
-    
-    # 初始化 IdeaService
-    from services.idea_service import IdeaService
-    app.state.idea_service = IdeaService(app.state.model_client)
-    logger.info("✅ IdeaService initialized")
+    # Python Worker 入口会先注入绑定；本地 ASGI 则从环境变量初始化。
+    if getattr(app.state, "idea_service", None) is None:
+        await initialize_application(app)
     
     yield
 
-    await app.state.model_client.close()
+    if os.environ.get("IDEA_SPARK_RUNTIME") != "cloudflare":
+        await app.state.model_client.close()
+        app.state.idea_service = None
+        app.state.model_client = None
     
     logger.info("👋 Idea Spark Server shutting down...")
 
@@ -125,6 +169,8 @@ async def index():
     raise HTTPException(status_code=404, detail="Index not found")
 
 if __name__ == "__main__":
+    import uvicorn
+
     port = int(os.environ.get("PORT", 3001))
     logger.info(f"Starting server on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

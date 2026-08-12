@@ -1,14 +1,21 @@
 {
   "name": "idea-spark",
+  "private": true,
   "version": "2.0.0",
-  "description": "AI-powered idea generator with agent framework",
+  "description": "AI-powered opportunity workbench",
   "main": "backend/app.py",
   "scripts": {
     "start": "python backend/app.py",
     "dev": "./start.sh",
-    "check": "./scripts/check.sh"
+    "check": "./scripts/check.sh",
+    "build": "npm --prefix frontend ci && npm --prefix frontend run build",
+    "deploy": "npm run build && cd backend && uv run pywrangler deploy",
+    "preview": "npm run build && cd backend && uv run pywrangler dev"
   },
-  "keywords": ["ai", "ideas", "agent", "generator"],
+  "keywords": ["ai", "ideas", "opportunities", "generator"],
   "author": "Edward",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^4.121.0"
+  }
 }
