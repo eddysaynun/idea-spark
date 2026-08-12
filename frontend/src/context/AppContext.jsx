@@ -181,7 +181,12 @@ export const AppProvider = ({ children }) => {
 
   const generateDetail = useCallback(async () => {
     if (!currentSession || currentIdeaIndex === null) return null;
-    const data = await ideasAPI.getDetail(currentSession.id, currentIdeaIndex, currentSession.model);
+    const data = await ideasAPI.getDetail(
+      currentSession.id,
+      currentIdeaIndex,
+      currentSession.ideas[currentIdeaIndex],
+      currentSession.model,
+    );
     if (!data.success) return null;
 
     const session = {

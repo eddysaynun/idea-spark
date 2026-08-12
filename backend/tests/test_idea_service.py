@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from services.agents.idea_agent import IdeaItem
 from services.idea_service import IdeaService
 
 
@@ -125,3 +126,49 @@ async def test_generation_rejects_models_outside_configured_list():
         await service.generate_ideas("开发者验证工具", 3, "dev-tools", "hidden-model")
 
     assert IdeaService.sessions == {}
+
+
+class DetailModelClient:
+    config = type("Config", (), {"model": "detail-model"})()
+
+    def __init__(self):
+        self.models = []
+
+    def validate_model(self, model):
+        selected = model or self.config.model
+        self.models.append(selected)
+        return selected
+
+    async def generate(self, _prompt, model=None, **_options):
+        assert model == "selected-model"
+        return "# 落地方案\n\n" + "可执行内容。" * 40
+
+
+async def test_detail_snapshot_does_not_require_in_memory_session():
+    client = DetailModelClient()
+    service = IdeaService(client)
+    idea = IdeaItem(
+        name="Snapshot Idea",
+        tagline="跨实例生成详情",
+        pain_point="Worker 内存不共享",
+        solution="提交当前 Idea 快照",
+        target_user="独立开发者",
+        market_size="待验证",
+        competitors="待验证",
+        pricing="待验证",
+        revenue="待验证",
+        tech_stack="React + FastAPI",
+        advantage="无状态",
+        score=8.0,
+        tags=["MVP"],
+        evidence=["真实生成结果"],
+        assumptions=["快照完整"],
+        risks=["请求被篡改"],
+        confidence="medium",
+    )
+
+    plan = await service.generate_detail_for_idea(idea, "selected-model")
+
+    assert plan.startswith("# 落地方案")
+    assert IdeaService.sessions == {}
+    assert client.models == ["selected-model"]

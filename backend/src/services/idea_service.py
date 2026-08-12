@@ -74,6 +74,11 @@ class IdeaService:
         session["updated_at"] = datetime.now().isoformat()
         return plan
 
+    async def generate_detail_for_idea(self, idea: IdeaItem, model: str = "") -> str:
+        """从已校验的 Idea 快照生成详情，不依赖进程内会话。"""
+        selected_model = self.model_client.validate_model(model)
+        return await DetailGenerationAgent(self.model_client, selected_model).generate_detail(idea)
+
     @classmethod
     def get_session(cls, session_id: str) -> Dict[str, Any]:
         session = cls.sessions.get(session_id)

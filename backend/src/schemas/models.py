@@ -2,8 +2,11 @@
 Pydantic 数据模型定义
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Literal
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated, Optional, List, Dict, Any, Literal
+
+
+IdeaListEntry = Annotated[str, Field(min_length=1, max_length=4000)]
 
 
 # ============ Config Schema ============
@@ -26,22 +29,24 @@ class ConfigResponse(BaseModel):
 
 class IdeaItem(BaseModel):
     """单个 Idea"""
-    name: str
-    tagline: str
-    pain_point: str
-    solution: str
-    target_user: str
-    market_size: str
-    competitors: str
-    pricing: str
-    revenue: str
-    tech_stack: str
-    advantage: str
-    score: float
-    tags: List[str]
-    evidence: List[str] = Field(default_factory=list)
-    assumptions: List[str] = Field(default_factory=list)
-    risks: List[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(..., min_length=1, max_length=200)
+    tagline: str = Field(..., min_length=1, max_length=500)
+    pain_point: str = Field(..., min_length=1, max_length=4000)
+    solution: str = Field(..., min_length=1, max_length=4000)
+    target_user: str = Field(..., min_length=1, max_length=2000)
+    market_size: str = Field(..., min_length=1, max_length=4000)
+    competitors: str = Field(..., min_length=1, max_length=4000)
+    pricing: str = Field(..., min_length=1, max_length=2000)
+    revenue: str = Field(..., min_length=1, max_length=2000)
+    tech_stack: str = Field(..., min_length=1, max_length=2000)
+    advantage: str = Field(..., min_length=1, max_length=4000)
+    score: float = Field(..., ge=0, le=10)
+    tags: List[IdeaListEntry] = Field(..., max_length=30)
+    evidence: List[IdeaListEntry] = Field(default_factory=list, max_length=30)
+    assumptions: List[IdeaListEntry] = Field(default_factory=list, max_length=30)
+    risks: List[IdeaListEntry] = Field(default_factory=list, max_length=30)
     confidence: Literal["low", "medium", "high"] = "medium"
 
 
@@ -68,6 +73,7 @@ class DetailRequest(BaseModel):
     session_id: str = Field(..., description="会话 ID")
     idea_index: int = Field(..., ge=0, description="Idea 索引")
     model: Optional[str] = Field(None, min_length=1, max_length=200, description="本次使用的模型")
+    idea: Optional[IdeaItem] = Field(None, description="当前 Idea 快照，用于无状态运行时生成详情")
 
 
 class DetailResponse(BaseModel):

@@ -76,12 +76,13 @@ export const ideasAPI = {
   },
 
   // 获取详细方案
-  getDetail: async (sessionId, ideaIndex, model = '') => {
+  getDetail: async (sessionId, ideaIndex, idea, model = '') => {
     const response = await apiClient.post('/detail', {
       session_id: sessionId,
       idea_index: ideaIndex,
       model: model || undefined,
-    });
+      idea,
+    }, { timeout: 180000 });
     return response.data;
   },
 };

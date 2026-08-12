@@ -1,6 +1,7 @@
 """Idea、会话和详情 API。"""
 
 import logging
+from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -13,6 +14,7 @@ from schemas.models import (
     SessionListResponse,
 )
 from services.idea_service import IdeaService
+from services.agents.idea_agent import IdeaItem as AgentIdeaItem
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ideas"])
@@ -40,15 +42,29 @@ async def generate_ideas(request: Request, body: GenerateRequest):
 @router.post("/detail", response_model=DetailResponse)
 async def generate_detail(request: Request, body: DetailRequest):
     try:
-        session = IdeaService.get_session(body.session_id)
-        plan = await request.app.state.idea_service.generate_detail(body.session_id, body.idea_index, body.model or "")
+        if body.idea is not None:
+            idea = AgentIdeaItem(**body.idea.model_dump())
+            try:
+                plan = await request.app.state.idea_service.generate_detail_for_idea(idea, body.model or "")
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            idea_payload = asdict(idea)
+        else:
+            session = IdeaService.get_session(body.session_id)
+            plan = await request.app.state.idea_service.generate_detail(
+                body.session_id, body.idea_index, body.model or ""
+            )
+            idea_payload = session["ideas"][body.idea_index]
         return DetailResponse(
             success=True,
-            idea=session["ideas"][body.idea_index],
+            idea=idea_payload,
             detailed_plan=plan,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.exception("Detail generation failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/sessions", response_model=SessionListResponse)
