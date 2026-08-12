@@ -89,7 +89,8 @@ async def initialize_application(app: FastAPI, env=None) -> None:
         if env is not None
         else os.environ.get("IDEA_SPARK_ADMIN_TOKEN", "")
     )
-    app.state.model_client = ModelClient(config)
+    model_proxy = getattr(env, "MODEL_PROXY", None) if env is not None else None
+    app.state.model_client = ModelClient(config, service_binding=model_proxy)
 
     from services.idea_service import IdeaService
 

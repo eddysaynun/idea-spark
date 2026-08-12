@@ -24,8 +24,9 @@ class ModelConfig:
 class ModelClient:
     """统一调用用户配置的 OpenAI-compatible 服务。"""
     
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, service_binding=None):
         self.config = config
+        self.service_binding = service_binding
         self.session: Optional[aiohttp.ClientSession] = None
         self._detected_models: List[str] = []
     
@@ -61,7 +62,9 @@ class ModelClient:
             模型生成的文本
         """
         # 确保 session 已初始化
-        if self.session is None or self.session.closed:
+        if self.service_binding is None and (
+            self.session is None or self.session.closed
+        ):
             self.session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.config.timeout)
             )
@@ -83,7 +86,9 @@ class ModelClient:
             流式数据块 (包含 thinking 和 content)
         """
         # 确保 session 已初始化
-        if self.session is None or self.session.closed:
+        if self.service_binding is None and (
+            self.session is None or self.session.closed
+        ):
             self.session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.config.timeout)
             )
@@ -126,6 +131,16 @@ class ModelClient:
         logger.info(f"📡 Calling compatible API: {url} with model: {model}")
         logger.debug(f"📝 Request payload: {json.dumps(payload, ensure_ascii=False)[:500]}")
         
+        if self.service_binding is not None:
+            response = await self._binding_fetch(
+                url,
+                method="POST",
+                headers=headers,
+                body=json.dumps(payload),
+            )
+            text_data = await response.text()
+            return self._parse_completion_response(response.status, text_data)
+
         async with self.session.post(url, headers=headers, json=payload) as response:
             logger.info(f"📡 Response status: {response.status}")
             
@@ -134,41 +149,8 @@ class ModelClient:
                 logger.error(f"❌ Compatible API error: {response.status} - {error_text[:500]}")
                 raise RuntimeError(f"Compatible API error: {response.status} - {error_text[:200]}")
             
-            try:
-                text_data = await response.text()
-                logger.debug(f"📄 Raw response: {text_data[:500]}")
-                
-                if not text_data or text_data.strip() == "":
-                    logger.error("❌ Empty response from API")
-                    raise RuntimeError("Empty response from API")
-                
-                data = json.loads(text_data)
-                logger.info(f"✅ Response received, type: {type(data)}")
-                
-                if not isinstance(data, dict):
-                    logger.error(f"❌ Invalid response format: {type(data)}")
-                    raise RuntimeError(f"Invalid response format: {type(data)}")
-                
-                if "choices" not in data:
-                    logger.error(f"❌ No 'choices' in response: {data.keys()}")
-                    raise RuntimeError(f"Invalid response structure: missing 'choices'")
-                
-                if len(data["choices"]) == 0:
-                    logger.error("❌ Empty choices array")
-                    raise RuntimeError("Empty choices array")
-                
-                content = data["choices"][0]["message"]["content"]
-                logger.info(f"✅ Content extracted, length: {len(content)}")
-                return content
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"❌ Failed to parse JSON: {e}")
-                logger.error(f"📄 Raw text: {text_data[:1000]}")
-                raise RuntimeError(f"Invalid JSON response: {e}")
-            except (KeyError, TypeError) as e:
-                logger.error(f"❌ Failed to extract content: {e}")
-                logger.error(f"📄 Full response: {data if 'data' in locals() else 'N/A'}")
-                raise RuntimeError(f"Invalid response structure: {e}")
+            text_data = await response.text()
+            return self._parse_completion_response(response.status, text_data)
 
     async def _call_compatible_stream(self, prompt: str, model_override: Optional[str] = None):
         """调用 OpenAI-compatible API（流式）。"""
@@ -201,6 +183,23 @@ class ModelClient:
         
         logger.info(f"📡 Calling compatible API (stream): {url} with model: {model}")
         
+        if self.service_binding is not None:
+            response = await self._binding_fetch(
+                url,
+                method="POST",
+                headers=headers,
+                body=json.dumps(payload),
+            )
+            if response.status != 200:
+                error_text = await response.text()
+                raise RuntimeError(
+                    f"Compatible API error: {response.status} - {error_text[:200]}"
+                )
+            stream_text = await response.text()
+            for chunk in self._parse_sse_text(stream_text):
+                yield chunk
+            return
+
         async with self.session.post(url, headers=headers, json=payload) as response:
             logger.info(f"📡 Response status: {response.status}")
             
@@ -241,6 +240,54 @@ class ModelClient:
             logger.info(f"✅ Stream completed: thinking={len(full_thinking)} chars, content={len(full_content)} chars")
             logger.debug(f"📝 Full thinking: {full_thinking[:500]}...")
             logger.debug(f"📝 Full content: {full_content[:500]}...")
+
+    async def _binding_fetch(self, url: str, **options):
+        """通过 Cloudflare Service Binding 调用模型代理。"""
+        try:
+            response = await self.service_binding.fetch(url, **options)
+            logger.info("📡 Service Binding response status: %s", response.status)
+            return response
+        except Exception:
+            logger.exception("❌ Model proxy Service Binding request failed")
+            raise
+
+    @staticmethod
+    def _parse_completion_response(status: int, text_data: str) -> str:
+        logger.info("📡 Response status: %s", status)
+        if status != 200:
+            logger.error("❌ Compatible API error: %s - %s", status, text_data[:500])
+            raise RuntimeError(f"Compatible API error: {status} - {text_data[:200]}")
+        if not text_data or not text_data.strip():
+            raise RuntimeError("Empty response from API")
+        try:
+            data = json.loads(text_data)
+            content = data["choices"][0]["message"]["content"]
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid JSON response: {exc}") from exc
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"Invalid response structure: {exc}") from exc
+        logger.info("✅ Content extracted, length: %s", len(content))
+        return content
+
+    @classmethod
+    def _parse_sse_text(cls, stream_text: str):
+        """解析 Service Binding 返回的 OpenAI-compatible SSE 文本。"""
+        for line in stream_text.splitlines():
+            line = line.strip()
+            if not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            try:
+                choice = json.loads(data_str).get("choices", [{}])[0]
+            except (json.JSONDecodeError, IndexError, TypeError):
+                continue
+            thinking, content = cls._extract_stream_parts(choice)
+            if thinking:
+                yield {"type": "thinking", "data": thinking}
+            if content:
+                yield {"type": "content", "data": content}
 
     @staticmethod
     def _extract_stream_parts(choice: Dict[str, Any]):
@@ -284,12 +331,29 @@ class ModelClient:
         logger.info(f"🔍 Detecting models from: {endpoint}")
         
         # 确保 session 已初始化
-        if self.session is None or self.session.closed:
+        if self.service_binding is None and (
+            self.session is None or self.session.closed
+        ):
             self.session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.config.timeout)
             )
         
         try:
+            if self.service_binding is not None:
+                headers = {}
+                if self.config.api_key:
+                    headers["Authorization"] = f"Bearer {self.config.api_key}"
+                response = await self._binding_fetch(endpoint, headers=headers)
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(
+                        "❌ Failed to get models: %s - %s",
+                        response.status,
+                        error_text[:200],
+                    )
+                    return []
+                return self._extract_model_names(await response.json())
+
             async with self.session.get(endpoint) as response:
                 logger.info(f"📡 Response status: {response.status}")
                 
@@ -301,41 +365,33 @@ class ModelClient:
                 data = await response.json()
                 logger.info(f"📄 Response data type: {type(data)}")
                 
-                models = []
-                
-                # 处理不同的响应格式
-                if isinstance(data, list):
-                    models = data
-                elif isinstance(data, dict):
-                    if "data" in data and isinstance(data["data"], list):
-                        models = data["data"]
-                    elif "models" in data and isinstance(data["models"], list):
-                        models = data["models"]
-                    elif "results" in data and isinstance(data["results"], list):
-                        models = data["results"]
-                
-                if models:
-                    # 提取模型名称
-                    model_names = []
-                    for m in models:
-                        if isinstance(m, dict) and "id" in m:
-                            model_names.append(m["id"])
-                        elif isinstance(m, str):
-                            model_names.append(m)
-                    
-                    if model_names:
-                        self._detected_models = model_names
-                        logger.info(f"✅ Found {len(model_names)} models: {model_names}")
-                        return model_names
-                
-                logger.warning("⚠️  Response doesn't contain models")
-                return []
+                return self._extract_model_names(data)
         
         except Exception as e:
             logger.error(f"❌ Model detection failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return []
+
+    def _extract_model_names(self, data: Any) -> List[str]:
+        """兼容常见模型列表响应并更新可选模型缓存。"""
+        models = data if isinstance(data, list) else []
+        if isinstance(data, dict):
+            for key in ("data", "models", "results"):
+                if isinstance(data.get(key), list):
+                    models = data[key]
+                    break
+        model_names = [
+            item["id"] if isinstance(item, dict) and "id" in item else item
+            for item in models
+            if (isinstance(item, dict) and "id" in item) or isinstance(item, str)
+        ]
+        if model_names:
+            self._detected_models = model_names
+            logger.info("✅ Found %s models: %s", len(model_names), model_names)
+            return model_names
+        logger.warning("⚠️  Response doesn't contain models")
+        return []
     
     def available_models(self) -> List[str]:
         """返回可供工作台选择的模型，不触发远程请求。"""

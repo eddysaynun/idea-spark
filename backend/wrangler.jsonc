@@ -14,6 +14,12 @@
       "**/__pycache__"
     ]
   },
+  "services": [
+    {
+      "binding": "MODEL_PROXY",
+      "service": "idea-spark-model-proxy"
+    }
+  ],
   "routes": [
     {
       "pattern": "idea-spark.heyedwardchen.com",
