@@ -21,16 +21,29 @@ class IdeaPipeline:
         yield self._progress("机会探索", 10, f"正在从多个切入角度探索 {candidate_count} 个候选…")
 
         explorer_content = ""
+        reasoning_preview = ""
+        content_preview = ""
         async for chunk in self.model_client.generate_stream(
             self._explorer_prompt(direction, candidate_count, category), self.model
         ):
             if chunk["type"] == "thinking":
-                yield {"type": "reasoning", "data": chunk["data"]}
+                reasoning_preview += chunk["data"]
+                if len(reasoning_preview) >= 160:
+                    yield {"type": "reasoning", "data": reasoning_preview}
+                    reasoning_preview = ""
             elif chunk["type"] == "content":
                 explorer_content += chunk["data"]
-                yield {"type": "text", "data": chunk["data"]}
+                content_preview += chunk["data"]
+                if len(content_preview) >= 160:
+                    yield {"type": "text", "data": content_preview}
+                    content_preview = ""
             elif chunk["type"] == "error":
                 raise RuntimeError(chunk["data"])
+
+        if reasoning_preview:
+            yield {"type": "reasoning", "data": reasoning_preview}
+        if content_preview:
+            yield {"type": "text", "data": content_preview}
 
         try:
             candidates = self.parser._parse_ideas_response(explorer_content, candidate_count)

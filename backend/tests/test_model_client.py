@@ -40,6 +40,11 @@ class FakeResponse:
     async def json(self):
         return self.data
 
+    async def text(self):
+        if isinstance(self.data, str):
+            return self.data
+        return __import__("json").dumps(self.data)
+
 
 class FakeBinding:
     def __init__(self, response):
@@ -81,3 +86,37 @@ def test_parse_service_binding_sse_response():
         {"type": "thinking", "data": "分析"},
         {"type": "content", "data": "答案"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_qwen35_requests_disable_thinking_for_structured_output():
+    response = FakeResponse({"choices": [{"message": {"content": "[]"}}]})
+    binding = FakeBinding(response)
+    client = ModelClient(
+        ModelConfig(base_url="https://qwen-api.example/v1", model="qwen35_27b"),
+        service_binding=binding,
+    )
+
+    assert await client.generate("return json") == "[]"
+    request_body = __import__("json").loads(binding.calls[0][1]["body"])
+    assert request_body["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+@pytest.mark.asyncio
+async def test_stream_reports_reasoning_without_final_content():
+    binding = FakeBinding(FakeResponse(
+        'data: {"choices":[{"delta":{"reasoning_content":"分析"}}]}\n\n'
+        'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n'
+        'data: [DONE]\n'
+    ))
+    client = ModelClient(
+        ModelConfig(base_url="https://qwen-api.example/v1", model="qwen35_27b"),
+        service_binding=binding,
+    )
+
+    chunks = [chunk async for chunk in client.generate_stream("return json")]
+
+    assert chunks[-1] == {
+        "type": "error",
+        "data": "模型未返回最终内容，可能是推理耗尽了输出预算",
+    }

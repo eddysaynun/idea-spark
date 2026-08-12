@@ -127,6 +127,7 @@ class ModelClient:
             "max_tokens": self.config.max_tokens,
             "stream": False  # 非流式
         }
+        self._apply_model_compatibility(payload, model)
         
         logger.info(f"📡 Calling compatible API: {url} with model: {model}")
         logger.debug(f"📝 Request payload: {json.dumps(payload, ensure_ascii=False)[:500]}")
@@ -180,6 +181,7 @@ class ModelClient:
             "max_tokens": self.config.max_tokens,
             "stream": True  # 流式
         }
+        self._apply_model_compatibility(payload, model)
         
         logger.info(f"📡 Calling compatible API (stream): {url} with model: {model}")
         
@@ -196,8 +198,14 @@ class ModelClient:
                     f"Compatible API error: {response.status} - {error_text[:200]}"
                 )
             stream_text = await response.text()
+            has_content = False
             for chunk in self._parse_sse_text(stream_text):
+                has_content = has_content or chunk["type"] == "content"
                 yield chunk
+            if not has_content:
+                raise RuntimeError(
+                    "模型未返回最终内容，可能是推理耗尽了输出预算"
+                )
             return
 
         async with self.session.post(url, headers=headers, json=payload) as response:
@@ -240,6 +248,10 @@ class ModelClient:
             logger.info(f"✅ Stream completed: thinking={len(full_thinking)} chars, content={len(full_content)} chars")
             logger.debug(f"📝 Full thinking: {full_thinking[:500]}...")
             logger.debug(f"📝 Full content: {full_content[:500]}...")
+            if not full_content:
+                raise RuntimeError(
+                    "模型未返回最终内容，可能是推理耗尽了输出预算"
+                )
 
     async def _binding_fetch(self, url: str, **options):
         """通过 Cloudflare Service Binding 调用模型代理。"""
@@ -288,6 +300,13 @@ class ModelClient:
                 yield {"type": "thinking", "data": thinking}
             if content:
                 yield {"type": "content", "data": content}
+
+    @staticmethod
+    def _apply_model_compatibility(payload: Dict[str, Any], model: str) -> None:
+        """为已知模型添加其 OpenAI-compatible 扩展参数。"""
+        normalized = model.lower().replace("-", "").replace("_", "")
+        if "qwen35" in normalized or "qwen3.5" in model.lower():
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
 
     @staticmethod
     def _extract_stream_parts(choice: Dict[str, Any]):
