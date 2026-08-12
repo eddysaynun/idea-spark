@@ -1,97 +1,93 @@
-import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
-import { Sparkles, ArrowRight } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowRight, Square, WandSparkles } from 'lucide-react';
+
+import { useApp } from '../context/app-context';
 import './GenerateForm.css';
 
+const categories = [
+  ['general', '通用产品'],
+  ['ai-agent', 'AI Agent'],
+  ['dev-tools', '开发者工具'],
+  ['privacy', '隐私安全'],
+  ['productivity', '效率工具'],
+];
+
+const examples = ['独立开发者验证需求', '本地优先的团队知识工具', 'AI 辅助售后工作流'];
+
 const GenerateForm = () => {
-  const { isGenerating, generateIdeas } = useApp();
+  const { availableModels, config, isGenerating, generateIdeas, cancelGeneration } = useApp();
   const [direction, setDirection] = useState('');
   const [count, setCount] = useState(5);
   const [category, setCategory] = useState('general');
+  const [model, setModel] = useState('');
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!direction.trim()) {
-      alert('请输入项目方向');
-      return;
+  const selectedModel = model || availableModels[0] || config.model || '';
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (direction.trim().length >= 2 && selectedModel) {
+      generateIdeas(direction.trim(), count, category, selectedModel);
     }
-    await generateIdeas(direction, count, category);
   };
 
-  const categories = [
-    { value: 'general', label: '通用 ToC', icon: '🎯' },
-    { value: 'ai-agent', label: 'AI Agent 工具', icon: '🤖' },
-    { value: 'dev-tools', label: '开发者工具', icon: '🛠️' },
-    { value: 'privacy', label: '隐私安全', icon: '🔒' },
-    { value: 'productivity', label: '效率工具', icon: '⚡' },
-  ];
-
   return (
-    <form className="generate-form" onSubmit={handleSubmit}>
-      <div className="form-row">
-        <div className="form-group form-group-large">
-          <label className="form-label">项目方向</label>
-          <input
-            type="text"
-            className="form-input"
-            value={direction}
-            onChange={(e) => setDirection(e.target.value)}
-            placeholder="例如：AI Agent 工具、开发者工具、隐私安全..."
-            disabled={isGenerating}
-          />
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">生成数量</label>
-          <input
-            type="number"
-            className="form-input"
-            min="1"
-            max="50"
-            value={count}
-            onChange={(e) => setCount(Math.max(1, Math.min(50, Number(e.target.value))))}
-            placeholder="1-50"
-            disabled={isGenerating}
-          />
-        </div>
+    <form className="generate-form" onSubmit={submit}>
+      <label htmlFor="direction">你想探索什么问题？</label>
+      <textarea
+        id="direction"
+        value={direction}
+        onChange={(event) => setDirection(event.target.value)}
+        placeholder="例如：帮助独立开发者更快验证真实付费需求"
+        rows={5}
+        maxLength={500}
+        disabled={isGenerating}
+      />
+      <div className="field-meta">
+        <span>描述用户、场景和约束，结果会更具体</span>
+        <span>{direction.length}/500</span>
       </div>
 
-      <div className="form-group">
-        <label className="form-label">分类选择</label>
-        <div className="category-grid">
-          {categories.map((cat) => (
-            <button
-              key={cat.value}
-              type="button"
-              className={`category-btn ${category === cat.value ? 'active' : ''}`}
-              onClick={() => setCategory(cat.value)}
-              disabled={isGenerating}
-            >
-              <span className="category-icon">{cat.icon}</span>
-              <span className="category-label">{cat.label}</span>
-            </button>
-          ))}
-        </div>
+      <div className="example-list" aria-label="输入示例">
+        {examples.map((example) => (
+          <button key={example} type="button" onClick={() => setDirection(example)} disabled={isGenerating}>
+            {example}
+          </button>
+        ))}
       </div>
 
-      <button
-        type="submit"
-        className="btn btn-primary btn-generate"
-        disabled={isGenerating || !direction.trim()}
-      >
-        {isGenerating ? (
-          <>
-            <span className="spinner"></span>
-            生成中...
-          </>
-        ) : (
-          <>
-            <Sparkles size={20} />
-            生成 Ideas
-            <ArrowRight size={20} />
-          </>
-        )}
-      </button>
+      <div className="form-split">
+        <label>
+          分类
+          <select value={category} onChange={(event) => setCategory(event.target.value)} disabled={isGenerating}>
+            {categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label>
+          定稿数量
+          <select value={count} onChange={(event) => setCount(Number(event.target.value))} disabled={isGenerating}>
+            {[3, 5, 8, 12].map((value) => <option key={value} value={value}>{value} 个</option>)}
+          </select>
+        </label>
+      </div>
+
+      <label className="model-field">
+        本次使用模型
+        <select value={selectedModel} onChange={(event) => setModel(event.target.value)} disabled={isGenerating || !selectedModel}>
+          {availableModels.length ? availableModels.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          )) : <option value={selectedModel}>{selectedModel || '请先在模型设置中完成配置'}</option>}
+        </select>
+      </label>
+
+      {isGenerating ? (
+        <button type="button" className="generate-action stop" onClick={cancelGeneration}>
+          <Square size={16} fill="currentColor" /> 停止生成
+        </button>
+      ) : (
+        <button type="submit" className="generate-action" disabled={direction.trim().length < 2 || !selectedModel}>
+          <WandSparkles size={18} /> 开始机会探索 <ArrowRight size={18} />
+        </button>
+      )}
     </form>
   );
 };

@@ -1,62 +1,35 @@
-import React from 'react';
-import { useApp } from '../context/AppContext';
-import { Star, Zap, TrendingUp } from 'lucide-react';
+import { ArrowUpRight, CircleAlert, Gauge, Radar } from 'lucide-react';
+
 import './IdeasGrid.css';
 
-const IdeasGrid = ({ ideas }) => {
-  const { currentSession, getDetail } = useApp();
+const confidenceLabel = { low: '低置信', medium: '中置信', high: '高置信' };
 
-  const handleCardClick = async (index) => {
-    if (!currentSession) return;
-    const data = await getDetail(currentSession, index);
-    if (data?.success) {
-      console.log('Detail:', data);
-    }
-  };
-
-  if (!ideas || ideas.length === 0) return null;
-
-  return (
-    <div className="ideas-grid">
-      {ideas.map((idea, index) => (
-        <div
-          key={index}
-          className="idea-card card-idea"
-          onClick={() => handleCardClick(index)}
-        >
-          <div className="idea-rank">#{index + 1}</div>
-          
-          <div className="idea-header">
-            <h3 className="idea-name">{idea.name || `项目 ${index + 1}`}</h3>
-            <div className="idea-score">
-              <Star size={16} fill="currentColor" />
-              <span>{idea.score || '8.5'}</span>
-            </div>
-          </div>
-
-          <p className="idea-tagline">{idea.tagline || '点击查看详细描述'}</p>
-
-          <div className="idea-pain-point">
-            <TrendingUp size={16} />
-            <span>{idea.pain_point || idea.solution || 'N/A'}</span>
-          </div>
-
-          <div className="idea-tags">
-            {(idea.tags || ['可变现', '痛点驱动']).slice(0, 4).map((tag, i) => (
-              <span key={i} className="tag">
-                {tag}
-              </span>
-            ))}
-          </div>
-
-          <div className="idea-footer">
-            <Zap size={16} />
-            点击查看详情
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
+const IdeasGrid = ({ ideas, onOpenIdea }) => (
+  <div className="ideas-list">
+    {ideas.map((idea, index) => (
+      <button className="idea-row" key={`${idea.name}-${index}`} onClick={() => onOpenIdea(index)}>
+        <span className="idea-number">{String(index + 1).padStart(2, '0')}</span>
+        <span className="idea-main">
+          <span className="idea-title-line">
+            <strong>{idea.name}</strong>
+            <span className={`confidence ${idea.confidence || 'medium'}`}>{confidenceLabel[idea.confidence] || '待评估'}</span>
+          </span>
+          <span className="idea-tagline">{idea.tagline}</span>
+          <span className="idea-evidence">
+            <Radar size={14} /> {idea.evidence?.[0] || '需要补充外部证据信号'}
+          </span>
+          <span className="idea-tags">
+            {(idea.tags || []).slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}
+          </span>
+        </span>
+        <span className="idea-metrics">
+          <span><Gauge size={15} /> {Number(idea.score || 0).toFixed(1)}</span>
+          <span><CircleAlert size={15} /> {idea.risks?.length || 0} 风险</span>
+        </span>
+        <ArrowUpRight className="idea-open" size={18} />
+      </button>
+    ))}
+  </div>
+);
 
 export default IdeasGrid;

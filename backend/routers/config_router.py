@@ -1,70 +1,86 @@
-"""
-配置管理路由
-"""
+"""受保护、仅进程内生效的模型配置 API。"""
 
-from fastapi import APIRouter, Depends, Request
-from typing import Annotated
+import hmac
+import os
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+
 from schemas.models import ConfigRequest, ConfigResponse, DetectModelsResponse
 
 router = APIRouter(tags=["config"])
 
-# 依赖注入 - 从 request 获取 app state
+
 def get_model_client(request: Request):
-    """从请求获取 model_client"""
     return request.app.state.model_client
 
 
-@router.get("/config", response_model=ConfigResponse)
-async def get_config(model_client = Depends(get_model_client)):
-    """获取当前配置"""
-    config_dict = {
-        "provider": model_client.config.provider,
-        "hermes_url": model_client.config.hermes_url,
-        "openai_model": model_client.config.openai_model,
-        "custom_base_url": model_client.config.custom_base_url,
-        "custom_model": model_client.config.custom_model,
-        "custom_api_key": model_client.config.custom_api_key,
-        "temperature": model_client.config.temperature,
-        "max_tokens": model_client.config.max_tokens
+def require_config_admin(
+    request: Request,
+    x_admin_token: Optional[str] = Header(default=None),
+) -> None:
+    """公网必须使用管理员令牌；未配置令牌时仅允许本机访问。"""
+    expected = os.environ.get("IDEA_SPARK_ADMIN_TOKEN", "")
+    if expected:
+        if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
+            raise HTTPException(status_code=401, detail="管理员令牌无效")
+        return
+
+    client_host = request.client.host if request.client else ""
+    if client_host not in {"127.0.0.1", "::1", "testclient"}:
+        raise HTTPException(
+            status_code=503,
+            detail="公网配置管理未启用，请设置 IDEA_SPARK_ADMIN_TOKEN",
+        )
+
+
+def public_config(model_client) -> dict:
+    """返回前端所需配置，永不回传密钥。"""
+    config = model_client.config
+    return {
+        "base_url": config.base_url,
+        "model": config.model,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+        "has_api_key": bool(config.api_key),
+        "available_models": model_client.available_models(),
+        "persistence": "memory",
     }
-    return ConfigResponse(success=True, config=config_dict)
+
+
+@router.get("/config", response_model=ConfigResponse)
+async def get_config(
+    _admin=Depends(require_config_admin),
+    model_client=Depends(get_model_client),
+):
+    return ConfigResponse(success=True, config=public_config(model_client))
 
 
 @router.post("/config", response_model=ConfigResponse)
-async def update_config(request: ConfigRequest, model_client = Depends(get_model_client)):
-    """更新配置"""
-    import json
-    import os
-    new_config = request.dict(exclude_unset=True)
-    model_client.update_config(new_config)
-    
-    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
-    full_config = {
-        "provider": model_client.config.provider,
-        "hermes_url": model_client.config.hermes_url,
-        "openai_api_key": model_client.config.openai_api_key,
-        "openai_model": model_client.config.openai_model,
-        "custom_base_url": model_client.config.custom_base_url,
-        "custom_model": model_client.config.custom_model,
-        "custom_api_key": model_client.config.custom_api_key,
-        "temperature": model_client.config.temperature,
-        "max_tokens": model_client.config.max_tokens
-    }
-    
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(full_config, f, indent=2, ensure_ascii=False)
-    
-    return ConfigResponse(success=True, config=full_config)
+async def update_config(
+    body: ConfigRequest,
+    _admin=Depends(require_config_admin),
+    model_client=Depends(get_model_client),
+):
+    changes = body.model_dump(exclude_unset=True)
+    for key in ("api_key",):
+        if changes.get(key) == "":
+            changes.pop(key)
+    model_client.update_config(changes)
+    return ConfigResponse(success=True, config=public_config(model_client))
 
 
 @router.get("/detect-models", response_model=DetectModelsResponse)
-async def detect_models(model_client = Depends(get_model_client)):
-    """检测 Custom API 支持的模型列表"""
-    try:
-        models = await model_client.detect_models()
-        return DetectModelsResponse(success=True, models=models)
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Model detection failed: {e}")
-        return DetectModelsResponse(success=False, models=[])
+async def detect_models(
+    _admin=Depends(require_config_admin),
+    model_client=Depends(get_model_client),
+):
+    models = await model_client.detect_models()
+    return DetectModelsResponse(success=bool(models), models=models)
+
+
+@router.get("/models", response_model=DetectModelsResponse)
+async def list_models(model_client=Depends(get_model_client)):
+    """向工作台公开可选择的模型名称，不暴露连接和密钥配置。"""
+    models = model_client.available_models()
+    return DetectModelsResponse(success=bool(models), models=models)

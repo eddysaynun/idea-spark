@@ -3,10 +3,8 @@ FastAPI Application - Idea Spark Backend
 """
 
 import logging
-import json
 import os
 from contextlib import asynccontextmanager
-from dataclasses import asdict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +22,34 @@ logger = logging.getLogger(__name__)
 # 全局状态
 sessions = {}
 
+
+def load_model_config_from_env() -> ModelConfig:
+    """从进程环境初始化模型配置，不读取或写入本地配置文件。"""
+    config = ModelConfig()
+    string_fields = {
+        "base_url": "IDEA_SPARK_MODEL_BASE_URL",
+        "model": "IDEA_SPARK_MODEL_NAME",
+        "api_key": "IDEA_SPARK_MODEL_API_KEY",
+    }
+    for field_name, env_name in string_fields.items():
+        if env_name in os.environ:
+            setattr(config, field_name, os.environ[env_name])
+
+    numeric_fields = {
+        "temperature": ("IDEA_SPARK_MODEL_TEMPERATURE", float),
+        "max_tokens": ("IDEA_SPARK_MODEL_MAX_TOKENS", int),
+        "timeout": ("IDEA_SPARK_MODEL_TIMEOUT", int),
+    }
+    for field_name, (env_name, converter) in numeric_fields.items():
+        if env_name not in os.environ:
+            continue
+        try:
+            setattr(config, field_name, converter(os.environ[env_name]))
+        except ValueError:
+            logger.warning("Ignoring invalid numeric environment variable: %s", env_name)
+
+    return config
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -32,22 +58,11 @@ async def lifespan(app: FastAPI):
     
     logger.info("🚀 Idea Spark Server starting...")
     
-    # 加载配置
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                saved_config = json.load(f)
-            app.state.model_config = ModelConfig(**saved_config)
-            logger.info("✅ Loaded model config from file")
-        except Exception as e:
-            logger.error(f"Failed to load config: {e}")
-            app.state.model_config = ModelConfig()
-    else:
-        app.state.model_config = ModelConfig()
+    # 只从环境变量初始化；运行时修改仅保存在当前进程内存中。
+    app.state.model_config = load_model_config_from_env()
     
     app.state.model_client = ModelClient(app.state.model_config)
-    logger.info(f"🔧 Model provider: {app.state.model_config.provider}")
+    logger.info("🔧 Default model: %s", app.state.model_config.model)
     
     # 初始化 IdeaService
     from services.idea_service import IdeaService
@@ -55,6 +70,8 @@ async def lifespan(app: FastAPI):
     logger.info("✅ IdeaService initialized")
     
     yield
+
+    await app.state.model_client.close()
     
     logger.info("👋 Idea Spark Server shutting down...")
 
@@ -69,8 +86,14 @@ app = FastAPI(
 # 添加 CORS 中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get(
+            "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+        ).split(",")
+        if origin.strip()
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

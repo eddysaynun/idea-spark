@@ -18,7 +18,7 @@ apiClient.interceptors.request.use(
     return config;
   },
   (error) => {
-    console.error('Request error:', error);
+    console.error('Request error:', error.message);
     return Promise.reject(error);
   }
 );
@@ -29,7 +29,7 @@ apiClient.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error('Response error:', error);
+    console.error('Response error:', error.message);
     return Promise.reject(error);
   }
 );
@@ -39,14 +39,30 @@ apiClient.interceptors.response.use(
 // 配置相关
 export const configAPI = {
   // 获取配置
-  getConfig: async () => {
-    const response = await apiClient.get('/config');
+  getConfig: async (adminToken = '') => {
+    const response = await apiClient.get('/config', {
+      headers: adminToken ? { 'X-Admin-Token': adminToken } : {},
+    });
     return response.data;
   },
 
   // 更新配置
-  updateConfig: async (config) => {
-    const response = await apiClient.post('/config', config);
+  updateConfig: async (config, adminToken = '') => {
+    const response = await apiClient.post('/config', config, {
+      headers: adminToken ? { 'X-Admin-Token': adminToken } : {},
+    });
+    return response.data;
+  },
+
+  detectModels: async (adminToken = '') => {
+    const response = await apiClient.get('/detect-models', {
+      headers: adminToken ? { 'X-Admin-Token': adminToken } : {},
+    });
+    return response.data;
+  },
+
+  listModels: async () => {
+    const response = await apiClient.get('/models');
     return response.data;
   },
 };
@@ -60,10 +76,11 @@ export const ideasAPI = {
   },
 
   // 获取详细方案
-  getDetail: async (sessionId, ideaIndex) => {
+  getDetail: async (sessionId, ideaIndex, model = '') => {
     const response = await apiClient.post('/detail', {
       session_id: sessionId,
       idea_index: ideaIndex,
+      model: model || undefined,
     });
     return response.data;
   },

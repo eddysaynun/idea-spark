@@ -5,7 +5,8 @@
   "main": "backend/app.py",
   "scripts": {
     "start": "python backend/app.py",
-    "dev": "python backend/app.py --dev"
+    "dev": "./start.sh",
+    "check": "./scripts/check.sh"
   },
   "keywords": ["ai", "ideas", "agent", "generator"],
   "author": "Edward",

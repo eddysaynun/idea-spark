@@ -1,230 +1,127 @@
-# 💡 Idea Spark
-
 <div align="center">
 
-![Idea Spark Banner](https://img.shields.io/badge/Idea-Spark-purple?style=for-the-badge&logo=spark)
-![Version](https://img.shields.io/badge/version-1.0.0-blue?style=for-the-badge)
-![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)
+<img src="frontend/public/favicon.svg" width="88" alt="Idea Spark icon" />
 
-**AI 驱动的可变现项目创意生成器** ✨
+# Idea Spark
 
-[English](README.md) | [中文](README_ZH.md)
+**把模糊方向，变成可验证的产品机会。**
+
+[`中文`](README.md) · [`English`](README_EN.md)
+
+<sub>OPENAI-COMPATIBLE · MODEL-SELECTABLE · EVIDENCE-AWARE</sub>
+
+<br /><br />
+
+![Idea Spark](https://img.shields.io/badge/IDEA_SPARK-OPPORTUNITY_WORKBENCH-15131A?style=flat-square)
+![Version](https://img.shields.io/badge/VERSION-2.0.0-6D4AFF?style=flat-square)
+![License](https://img.shields.io/badge/LICENSE-MIT-2AAE8A?style=flat-square)
 
 </div>
 
 ---
 
-## 🌟 特性
+Idea Spark 是一个面向独立开发者与小团队的机会探索工作台：把模糊方向转成可比较的产品候选，并明确展示证据信号、关键假设、主要风险和置信度。
 
-- 🤖 **AI 驱动** - 基于先进 AI 模型生成高质量项目创意
-- ⚡ **实时流式** - 看到 AI 的思考过程和生成内容
-- 💰 **变现导向** - 每个创意都包含市场分析、定价策略和收入预测
-- 🎯 **痛点驱动** - 基于真实市场需求和痛点分析
-- 🎨 **精美 UI** - Apple 风格设计，流畅动画体验
-- 💾 **数据持久化** - 自动生成历史保存到 localStorage，防止刷新丢失
+## 产品流程
 
-## 🚀 快速开始
+后端不是一次性生成，而是三阶段模型流水线：
 
-### 前置要求
+1. **Explorer** 生成双倍候选，主动扩大用户、场景、付费触发和交付形态的差异。
+2. **Critic** 独立评估痛点、差异化、可执行性、变现与证据质量。
+3. **Editor** 根据评审去重并定稿，输出严格结构化结果。
 
-- Node.js 16+
-- Python 3.8+
-- Git
+模型判断不等同于已验证市场事实。UI 会分别展示 `evidence`、`assumptions`、`risks` 与 `confidence`，提醒用户继续做访谈和外部核验。
 
-### 安装
+## 技术栈
+
+- Frontend：React 19、Vite 8、原生 Node test、oxlint
+- Backend：FastAPI、Pydantic 2、aiohttp、pytest
+- Model：用户自带 OpenAI-compatible endpoint，可在工作台按任务选择模型
+
+## 本地启动
+
+前置要求：Node.js、npm、Python 3.8+、[uv](https://docs.astral.sh/uv/)。
 
 ```bash
-# 克隆项目
-git clone https://github.com/your-username/idea-spark.git
-cd idea-spark
-
-# 安装前端依赖
 cd frontend
-npm install
+npm ci
 
-# 安装后端依赖
 cd ../backend
-pip install -r requirements.txt
-```
+uv sync --group dev
 
-### 启动
-
-**方式一：使用启动脚本（推荐）**
-
-```bash
-# 在项目根目录
-chmod +x start.sh
+cd ..
 ./start.sh
 ```
 
-**方式二：手动启动**
+- Web：<http://localhost:3000>
+- API：<http://localhost:3001>
+- OpenAPI：<http://localhost:3001/docs>
+
+`start.sh` 只启动并清理自己创建的两个进程，不会安装系统依赖、强制杀死占用端口的其他进程。
+
+## 模型配置
+
+在“模型设置”中填写 OpenAI-compatible `/v1` Base URL、API Key 和默认模型。检测接口返回模型列表后，用户可在工作台为每次机会探索选择模型。
+
+模型配置不会写入文件或数据库。服务启动时从环境变量读取配置；设置页的修改只保存在当前后端进程内存中，重启即恢复启动配置。API 只返回 `has_*_api_key` 状态，不会把密钥原文传回浏览器。
+
+公网部署必须设置 `IDEA_SPARK_ADMIN_TOKEN`。配置读取、修改和模型探测都要求请求头 `X-Admin-Token`；浏览器中的令牌只存在于设置页组件内存，刷新或离开页面即清除。未设置管理员令牌时，配置接口只允许本机访问。
+
+常用启动变量：
 
 ```bash
-# 终端 1 - 启动后端
-cd backend
-python3 app.py
-
-# 终端 2 - 启动前端
-cd frontend
-npm run dev
+IDEA_SPARK_ADMIN_TOKEN=<strong-random-token>
+IDEA_SPARK_MODEL_BASE_URL=https://model.example/v1
+IDEA_SPARK_MODEL_NAME=qwen3.5-27b
+IDEA_SPARK_MODEL_API_KEY=<model-api-key>
+IDEA_SPARK_MODEL_TEMPERATURE=0.7
+IDEA_SPARK_MODEL_MAX_TOKENS=16384
+IDEA_SPARK_MODEL_TIMEOUT=600
 ```
 
-### 访问
+生产环境应通过平台 Secret/密钥管理器注入这些值，不要写进镜像或仓库。运行时只允许选择已配置的默认模型或 `/models` 探测到的模型，避免客户端传入任意模型名。
 
-- **前端**: http://localhost:5173
-- **后端 API**: http://localhost:3001
+## 质量门禁
 
-## 📁 项目结构
-
-```
-idea-spark/
-├── backend/                 # Python FastAPI 后端
-│   ├── app.py              # 主应用入口
-│   ├── routers/            # API 路由
-│   ├── services/           # 业务逻辑
-│   │   ├── agents/        # AI Agent
-│   │   ├── models/        # 模型客户端
-│   │   └── idea_service.py
-│   ├── schemas/           # 数据模型
-│   ├── utils/             # 工具函数
-│   └── logs/              # 日志目录
-├── frontend/              # React + Vite 前端
-│   ├── src/
-│   │   ├── components/    # React 组件
-│   │   ├── context/       # 全局状态
-│   │   ├── utils/         # 工具函数
-│   │   └── App.jsx        # 主应用
-│   └── dist/              # 构建输出
-├── start.sh              # 一键启动脚本
-├── README.md             # 项目文档
-└── package.json          # 项目配置
-```
-
-## 🎨 设计理念
-
-**Idea Spark** 采用独特的 "Spark" 设计主题：
-
-- 🟣 **紫色** - 代表创新与灵感
-- 🟠 **橙色** - 代表能量与变现
-- 🔵 **青色** - 代表技术与专业
-
-核心设计原则：
-- 动态光晕背景效果
-- 渐变进度条动画
-- 卡片悬停光晕
-- 平滑过渡动画
-
-## 🔧 配置
-
-### 后端配置
-
-创建 `backend/config.json`:
-
-```json
-{
-  "provider": "custom",
-  "custom_base_url": "http://your-api-endpoint",
-  "custom_model": "your-model",
-  "custom_api_key": "your-api-key",
-  "temperature": 0.7,
-  "max_tokens": 16384
-}
-```
-
-### 前端配置
-
-前端通过 API 自动获取配置，无需额外设置。
-
-## 📊 功能展示
-
-### 1. 生成 Ideas
-
-输入项目方向，选择分类和数量，AI 将生成可变现的项目创意。
-
-### 2. 实时流式输出
-
-看到 AI 的思考过程和生成内容，体验真实的创作过程。
-
-### 3. 历史管理
-
-所有生成的 Ideas 自动保存，支持查看和删除历史记录。
-
-### 4. 详细方案
-
-点击任意 Idea 查看详细的技术方案、市场分析和实施建议。
-
-## 🛠️ 技术栈
-
-### 前端
-
-- **React 18** - UI 框架
-- **Vite** - 构建工具
-- **Axios** - HTTP 客户端
-- **Lucide React** - 图标库
-- **Framer Motion** - 动画库
-
-### 后端
-
-- **FastAPI** - Web 框架
-- **Python 3.8+** - 编程语言
-- **Pydantic** - 数据验证
-- **aiohttp** - 异步 HTTP 客户端
-
-## 📝 开发指南
-
-### 添加新组件
+所有改动交付前必须运行：
 
 ```bash
-cd frontend/src/components
-# 创建组件文件
-touch NewComponent.jsx NewComponent.css
+./scripts/check.sh
 ```
 
-### 添加新 API 路由
+门禁依次执行：
 
-```bash
-cd backend/routers
-# 创建路由文件
-touch new_router.py
-# 在 app.py 中注册
+- 前端 oxlint
+- 前端 SSE 单元测试
+- 前端 production build
+- 后端 pytest
+- Python compileall
+- `git diff --check`
+
+编码 Agent 的通用工作入口是 [`AGENTS.md`](AGENTS.md)。
+
+## 目录
+
+```text
+frontend/src/
+  components/               产品页面与组件
+  context/AppContext.jsx    会话、生成与 API 状态
+  utils/sse.js              支持跨 chunk 的 SSE 解析
+
+backend/
+  routers/                  HTTP/SSE 边界
+  services/idea_service.py  会话与详情编排
+  services/agents/
+    idea_pipeline.py        Explorer → Critic → Editor
+    idea_agent.py           输出解析与详情 Agent
+  services/models/          模型提供商适配
+  tests/                    后端回归测试
 ```
 
-### 运行测试
+## 安全与数据边界
 
-```bash
-# 后端测试
-cd backend
-pytest
-
-# 前端测试
-cd frontend
-npm test
-```
-
-## 🐛 问题反馈
-
-遇到问题？请查看：
-
-- [BUGFIX.md](BUGFIX.md) - 已知问题和修复
-- [STARTUP.md](STARTUP.md) - 启动指南
-- [DELIVERY.md](DELIVERY.md) - 交付文档
-
-或提交 [Issue](https://github.com/your-username/idea-spark/issues)
-
-## 📄 License
-
-MIT License - 详见 [LICENSE](LICENSE) 文件
-
-## 🙏 致谢
-
-感谢使用 Idea Spark！如果这个项目对你有帮助，请给一个 ⭐ Star。
-
----
-
-<div align="center">
-
-**✨ 让创意迸发，让想法变现 ✨**
-
-Made with ❤️ by Idea Spark Team
-
-</div>
+- 默认 CORS 仅允许本地前端来源，可通过 `CORS_ORIGINS` 配置。
+- 模型配置不落盘；公网配置接口必须使用管理员令牌。
+- 未完成的生成会话会在 pipeline 失败时清理。
+- 无效或数量不符的模型 JSON 会显式失败，不使用伪造 fallback 结果冒充成功。
+- 当前会话存储在单进程内存中，服务重启后清空；持久化数据库应在需要多实例或长期历史时再引入。

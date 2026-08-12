@@ -1,46 +1,38 @@
-import React, { useEffect, useState } from 'react';
-import { useApp } from './context/AppContext';
-import { Sparkles, FileText, History, Settings, Zap } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
 import Header from './components/Header';
-import WelcomePage from './components/WelcomePage';
-import GeneratePage from './components/GeneratePage';
 import DetailPage from './components/DetailPage';
+import GeneratePage from './components/GeneratePage';
 import HistoryPage from './components/HistoryPage';
 import SettingsPage from './components/SettingsPage';
+import { useApp } from './context/app-context';
 import './App.css';
 
 function App() {
-  const { loadConfig } = useApp();
-  const [currentPage, setCurrentPage] = useState('welcome');
+  const { loadModels, loadSessions, loadSession, selectIdea } = useApp();
+  const [currentPage, setCurrentPage] = useState('generate');
 
   useEffect(() => {
-    loadConfig();
-  }, [loadConfig]);
+    loadSessions();
+    loadModels();
+  }, [loadModels, loadSessions]);
 
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'welcome':
-        return <WelcomePage onGetStarted={() => setCurrentPage('generate')} />;
-      case 'generate':
-        return <GeneratePage />;
-      case 'detail':
-        return <DetailPage />;
-      case 'history':
-        return <HistoryPage />;
-      case 'settings':
-        return <SettingsPage />;
-      default:
-        return <WelcomePage onGetStarted={() => setCurrentPage('generate')} />;
-    }
+  const openIdea = (index) => {
+    if (selectIdea(index)) setCurrentPage('detail');
+  };
+
+  const openSession = async (sessionId) => {
+    if (await loadSession(sessionId)) setCurrentPage('generate');
   };
 
   return (
-    <div className="app-container">
+    <div className="app-shell">
       <Header currentPage={currentPage} onPageChange={setCurrentPage} />
       <main className="main-content">
-        <div className="page">
-          {renderPage()}
-        </div>
+        {currentPage === 'generate' && <GeneratePage onOpenIdea={openIdea} />}
+        {currentPage === 'detail' && <DetailPage onBack={() => setCurrentPage('generate')} />}
+        {currentPage === 'history' && <HistoryPage onOpenSession={openSession} />}
+        {currentPage === 'settings' && <SettingsPage />}
       </main>
     </div>
   );

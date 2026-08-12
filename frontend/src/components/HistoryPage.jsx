@@ -1,47 +1,38 @@
-import React from 'react';
-import { useApp } from '../context/AppContext';
-import { Clock } from 'lucide-react';
+import { ArrowUpRight, Clock3, Trash2 } from 'lucide-react';
+
+import { useApp } from '../context/app-context';
 import './HistoryPage.css';
 
-const HistoryPage = () => {
-  const { sessions, loadSession } = useApp();
-
-  if (sessions.length === 0) {
-    return (
-      <div className="history-page empty-state">
-        <h2 className="page-title">暂无历史记录</h2>
-        <p className="page-subtitle">生成的 Ideas 会保存在这里</p>
-      </div>
-    );
-  }
+const HistoryPage = ({ onOpenSession }) => {
+  const { sessions, deleteSession } = useApp();
 
   return (
-    <div className="history-page">
-      <div className="page-header">
-        <h1 className="page-title">历史记录</h1>
-        <p className="page-subtitle">查看你之前生成的 Ideas</p>
+    <div className="content-page history-page">
+      <div className="content-heading">
+        <p className="eyebrow"><span /> EXPLORATION ARCHIVE</p>
+        <h1>历史探索</h1>
+        <p>重新打开一次探索，继续比较机会或生成详细方案。</p>
       </div>
 
-      <div className="history-list">
-        {sessions.map((session) => (
-          <div
-            key={session.id}
-            className="history-card"
-            onClick={() => loadSession(session.id)}
-          >
-            <div className="history-info">
-              <h3>{session.direction}</h3>
-              <p>{session.count} 个 Ideas • {session.category}</p>
-            </div>
-            <div className="history-meta">
-              <span className="history-date">
-                <Clock size={14} />
-                {new Date(session.created_at).toLocaleString('zh-CN')}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
+      {sessions.length === 0 ? (
+        <div className="page-empty"><Clock3 size={28} /><h2>还没有历史记录</h2><p>完成第一次机会探索后，会话会出现在这里。</p></div>
+      ) : (
+        <div className="history-list">
+          {sessions.map((session) => (
+            <article key={session.id}>
+              <button className="history-open" onClick={() => onOpenSession(session.id)}>
+                <span className="history-date">{new Date(session.created_at).toLocaleString('zh-CN')}</span>
+                <strong>{session.direction}</strong>
+                <span>{session.count} 个机会 · {session.model || session.category}</span>
+                <ArrowUpRight size={18} />
+              </button>
+              <button className="history-delete" onClick={() => deleteSession(session.id)} aria-label={`删除 ${session.direction}`} title="删除记录">
+                <Trash2 size={16} />
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

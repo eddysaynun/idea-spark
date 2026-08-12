@@ -3,7 +3,7 @@
 ## ✅ 完成状态
 
 ### 1. 核心功能 (100%)
-- ✅ **模型配置** - Hermes/OpenAI/Custom API 支持
+- ✅ **模型配置** - 用户自带 OpenAI-compatible API 与工作台模型选择
 - ✅ **模型检测** - 自动检测 API 支持的模型
 - ✅ **Ideas 生成** - 完整的生成流程
 - ✅ **会话管理** - 历史会话列表和详情
@@ -40,7 +40,7 @@
   - GET /api/sessions/{id} - 会话详情
 
 ### 4. 安全性 (100%)
-- ✅ config.json 加入 .gitignore
+- ✅ 模型配置仅使用环境变量与进程内存，不生成配置文件
 - ✅ API Key 不硬编码
 - ✅ CORS 配置
 - ✅ 输入验证（Pydantic）
@@ -56,7 +56,6 @@
 idea-spark/
 ├── backend/
 │   ├── app.py                          # FastAPI 入口 ✅
-│   ├── config.json                     # 配置文件 (gitignore) ✅
 │   ├── docs/
 │   │   ├── README.md                   # 开发规范 ✅
 │   │   └── MIGRATION.md                # 迁移报告 ✅
@@ -80,7 +79,8 @@ idea-spark/
 │   │   └── __init__.py
 │   ├── tests/
 │   │   └── __init__.py
-│   ├── requirements.txt
+│   ├── pyproject.toml
+│   ├── uv.lock
 │   └── pyproject.toml
 ├── frontend/
 │   ├── dist/                           # 构建产物 ✅
@@ -164,7 +164,7 @@ cd frontend && npm run dev
 - [x] 导航切换正常
 
 ### 安全验证
-- [x] config.json 不提交
+- [x] 模型配置不落盘
 - [x] API Key 保护
 - [x] 输入验证完善
 

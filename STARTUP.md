@@ -27,7 +27,7 @@ chmod +x start.sh
 cd backend
 
 # 使用 uv 安装依赖
-uv pip install -r requirements.txt --system
+uv sync --group dev
 
 # 启动服务
 uv run python app.py
@@ -83,8 +83,8 @@ idea-spark/
 │   ├── app.py           # 主应用
 │   ├── agents.py        # Agent 框架
 │   ├── model_client.py  # 模型调用
-│   ├── requirements.txt # Python 依赖
-│   └── config.json      # 配置（自动生成）
+│   ├── pyproject.toml   # Python 依赖与项目配置
+│   └── uv.lock          # 锁定依赖版本
 │
 ├── frontend/             # React 前端
 │   ├── src/
@@ -112,8 +112,8 @@ idea-spark/
 
 3. **配置模型**（可选）
    - 点击"设置" Tab
-   - 选择模型提供商（Hermes/OpenAI/Custom）
-   - 填写对应的 URL 或 API Key
+   - 填写 OpenAI-compatible Base URL、API Key 和默认模型
+   - 检测模型后，可在工作台为每次探索选择模型
    - 点击"保存配置"
 
 4. **生成 Ideas**
@@ -151,7 +151,7 @@ kill -9 <PID>
 ```bash
 # 使用 uv 安装
 cd backend
-uv pip install -r requirements.txt --system
+uv sync --group dev
 ```
 
 ### 3. 前端依赖安装失败
@@ -164,7 +164,7 @@ npm install
 
 ### 4. 模型调用失败
 
-- 确保 Hermes 或其他模型服务正在运行
+- 确保用户配置的 OpenAI-compatible 模型服务正在运行
 - 检查配置中的 URL 是否正确
 - 查看后端日志：`backend/app.py` 输出
 

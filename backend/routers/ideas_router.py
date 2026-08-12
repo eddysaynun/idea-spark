@@ -1,101 +1,71 @@
-"""
-Ideas 生成路由
-"""
+"""Idea、会话和详情 API。"""
 
-from fastapi import APIRouter, Depends, Request, HTTPException
-from typing import Annotated
 import logging
-from schemas.models import GenerateRequest, GenerateResponse, SessionListResponse, SessionDetailResponse
+
+from fastapi import APIRouter, HTTPException, Request
+
+from schemas.models import (
+    DetailRequest,
+    DetailResponse,
+    GenerateRequest,
+    GenerateResponse,
+    SessionDetailResponse,
+    SessionListResponse,
+)
 from services.idea_service import IdeaService
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(tags=["ideas"])
-
-# 依赖注入
-def get_model_client(request: Request):
-    """从请求获取 model_client"""
-    return request.app.state.model_client
 
 
 @router.post("/generate", response_model=GenerateResponse)
-async def generate_ideas(
-    request: Request,
-    body: GenerateRequest
-):
-    """生成 Ideas"""
+async def generate_ideas(request: Request, body: GenerateRequest):
     try:
-        idea_service = request.app.state.idea_service
-        ideas = await idea_service.generate_ideas(
-            direction=body.direction,
-            count=body.count,
-            category=body.category
+        session = await request.app.state.idea_service.generate_ideas(
+            direction=body.direction.strip(), count=body.count, category=body.category, model=body.model or ""
         )
-        
-        # 转换为字典
-        ideas_dict = [
-            {
-                "name": idea.name,
-                "tagline": idea.tagline,
-                "pain_point": idea.pain_point,
-                "solution": idea.solution,
-                "target_user": idea.target_user,
-                "market_size": idea.market_size,
-                "competitors": idea.competitors,
-                "pricing": idea.pricing,
-                "revenue": idea.revenue,
-                "tech_stack": idea.tech_stack,
-                "advantage": idea.advantage,
-                "score": idea.score,
-                "tags": idea.tags
-            }
-            for idea in ideas
-        ]
-        
         return GenerateResponse(
             success=True,
-            session_id=ideas_dict[0]["name"] if ideas_dict else "",  # 简化处理
-            ideas=ideas_dict,
-            total=len(ideas_dict)
+            session_id=session["id"],
+            ideas=session["ideas"],
+            total=len(session["ideas"]),
         )
-    except Exception as e:
-        logger.error(f"Generate failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Idea generation failed")
+        raise HTTPException(status_code=502, detail="模型生成失败，请检查配置后重试") from exc
+
+
+@router.post("/detail", response_model=DetailResponse)
+async def generate_detail(request: Request, body: DetailRequest):
+    try:
+        session = IdeaService.get_session(body.session_id)
+        plan = await request.app.state.idea_service.generate_detail(body.session_id, body.idea_index, body.model or "")
+        return DetailResponse(
+            success=True,
+            idea=session["ideas"][body.idea_index],
+            detailed_plan=plan,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions():
-    """获取所有会话列表"""
-    sessions = IdeaService.list_sessions()
-    return SessionListResponse(
-        success=True,
-        sessions=[
-            {
-                "id": s["id"],
-                "direction": s["direction"],
-                "category": s["category"],
-                "count": s["count"],
-                "created_at": s["created_at"],
-                "updated_at": s["updated_at"]
-            }
-            for s in sessions
-        ]
-    )
+    return SessionListResponse(success=True, sessions=IdeaService.list_sessions())
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session(session_id: str):
-    """获取会话详情"""
     try:
-        session = IdeaService.get_session(session_id)
-        return SessionDetailResponse(
-            success=True,
-            direction=session["direction"],
-            count=session["count"],
-            category=session["category"],
-            ideas=session["ideas"],
-            created_at=session["created_at"],
-            updated_at=session["updated_at"]
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        return SessionDetailResponse(success=True, **IdeaService.get_session(session_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    if not IdeaService.delete_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"success": True}
