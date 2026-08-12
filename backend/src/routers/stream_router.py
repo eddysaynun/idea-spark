@@ -1,8 +1,9 @@
 """三阶段生成流水线的 SSE 接口。"""
 
+import asyncio
 import json
 import logging
-from typing import AsyncGenerator, Literal
+from typing import AsyncGenerator, AsyncIterator, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -17,6 +18,32 @@ router = APIRouter(tags=["stream"])
 
 def sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+async def with_heartbeat(
+    source: AsyncIterator[dict], interval: float = 12.0
+) -> AsyncGenerator[Optional[dict], None]:
+    """等待长模型阶段时发出保活标记，不取消正在执行的模型请求。"""
+    iterator = source.__aiter__()
+    pending = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.create_task(anext(iterator))
+            done, _ = await asyncio.wait({pending}, timeout=interval)
+            if not done:
+                yield None
+                continue
+            try:
+                event = pending.result()
+            except StopAsyncIteration:
+                return
+            pending = None
+            yield event
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
 
 
 @router.get("/generate-stream")
@@ -38,7 +65,11 @@ async def generate_ideas_stream(
         yield sse({"type": "start", "data": {"session_id": session["id"], "direction": direction}})
         try:
             pipeline = IdeaPipeline(request.app.state.model_client, selected_model)
-            async for event in pipeline.run_events(direction.strip(), count, category):
+            events = pipeline.run_events(direction.strip(), count, category)
+            async for event in with_heartbeat(events):
+                if event is None:
+                    yield ": heartbeat\n\n"
+                    continue
                 if event["type"] == "idea":
                     ideas.append(IdeaItem(**event["data"]))
                 yield sse(event)
