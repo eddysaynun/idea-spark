@@ -4,7 +4,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,6 +13,7 @@ from services.models.model_client import ModelClient, ModelConfig
 from routers.config_router import router as config_router
 from routers.ideas_router import router as ideas_router
 from routers.stream_router import router as stream_router
+from routers.auth_router import router as auth_router
 
 from utils.logger import setup_logging
 logger = logging.getLogger(__name__)
@@ -89,12 +91,28 @@ async def initialize_application(app: FastAPI, env=None) -> None:
         if env is not None
         else os.environ.get("IDEA_SPARK_ADMIN_TOKEN", "")
     )
+    app.state.github_client_id = (
+        str(getattr(env, "GITHUB_CLIENT_ID", ""))
+        if env is not None else os.environ.get("GITHUB_CLIENT_ID", "")
+    )
+    app.state.github_client_secret = (
+        str(getattr(env, "GITHUB_CLIENT_SECRET", ""))
+        if env is not None else os.environ.get("GITHUB_CLIENT_SECRET", "")
+    )
     model_proxy = getattr(env, "MODEL_PROXY", None) if env is not None else None
     app.state.model_client = ModelClient(config, service_binding=model_proxy)
 
     from services.idea_service import IdeaService
 
     app.state.idea_service = IdeaService(app.state.model_client)
+    database = getattr(env, "DB", None) if env is not None else None
+    if database is not None:
+        from services.account_store import AccountStore
+        idea_limit = int(str(getattr(env, "FREE_IDEA_LIMIT", "5")))
+        detail_limit = int(str(getattr(env, "FREE_DETAIL_LIMIT", "2")))
+        app.state.account_store = AccountStore(database, idea_limit, detail_limit)
+    else:
+        app.state.account_store = None
     logger.info("IdeaService initialized with model %s", config.model)
 
 @asynccontextmanager
@@ -123,8 +141,35 @@ app = FastAPI(
     title="Idea Spark API",
     description="AI-powered idea generation service",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url=None if os.environ.get("IDEA_SPARK_RUNTIME") == "cloudflare" else "/docs",
+    openapi_url=None if os.environ.get("IDEA_SPARK_RUNTIME") == "cloudflare" else "/openapi.json",
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > 1_000_000:
+                return JSONResponse(status_code=413, content={"detail": "请求体过大"})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "无效的 Content-Length"})
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; img-src 'self' https://avatars.githubusercontent.com data:; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
+        "font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com"
+    )
+    if request.url.path.startswith("/api/") and "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-store"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 # 添加 CORS 中间件
 app.add_middleware(
@@ -136,7 +181,7 @@ app.add_middleware(
         ).split(",")
         if origin.strip()
     ],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -149,6 +194,7 @@ if os.path.exists(static_path):
 
 # 注册路由
 app.include_router(config_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 app.include_router(ideas_router, prefix="/api")
 app.include_router(stream_router, prefix="/api")
 

@@ -16,7 +16,7 @@
   },
   "keywords": ["ai", "ideas", "opportunities", "generator"],
   "author": "Edward",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "devDependencies": {
     "wrangler": "^4.121.0"
   }

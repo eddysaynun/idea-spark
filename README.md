@@ -14,7 +14,7 @@
 
 ![Idea Spark](https://img.shields.io/badge/IDEA_SPARK-OPPORTUNITY_WORKBENCH-15131A?style=flat-square)
 ![Version](https://img.shields.io/badge/VERSION-2.0.0-6D4AFF?style=flat-square)
-![License](https://img.shields.io/badge/LICENSE-MIT-2AAE8A?style=flat-square)
+![License](https://img.shields.io/badge/LICENSE-PROPRIETARY-6D28D9?style=flat-square)
 
 </div>
 
@@ -36,7 +36,7 @@ Idea Spark 是一个面向独立开发者与小团队的机会探索工作台：
 
 - Frontend：React 19、Vite 8、原生 Node test、oxlint
 - Backend：FastAPI、Pydantic 2、aiohttp、pytest
-- Model：用户自带 OpenAI-compatible endpoint，可在工作台按任务选择模型
+- Model：平台接入 OpenAI-compatible endpoint，登录用户可在工作台按任务选择已授权模型
 
 ## 本地启动
 
@@ -61,9 +61,9 @@ cd ..
 
 ## 模型配置
 
-在“模型设置”中填写 OpenAI-compatible `/v1` Base URL、API Key 和默认模型。检测接口返回模型列表后，用户可在工作台为每次机会探索选择模型。
+由部署管理员通过 Secret 注入 OpenAI-compatible `/v1` Base URL、API Key 和默认模型。登录用户只能在工作台选择平台已授权的模型，无法读取或修改上游连接与密钥。
 
-模型配置不会写入文件或数据库。服务启动时从环境变量读取配置；设置页的修改只保存在当前后端进程内存中，重启即恢复启动配置。API 只返回 `has_*_api_key` 状态，不会把密钥原文传回浏览器。
+模型配置不会写入文件或数据库。服务启动时从环境变量或 Worker Secret 读取配置；受管理员令牌保护的运行时修改仅保存在当前实例内存中，重启即恢复启动配置。API 只返回密钥是否存在，不会把原文传回浏览器。
 
 公网部署必须设置 `IDEA_SPARK_ADMIN_TOKEN`。配置读取、修改和模型探测都要求请求头 `X-Admin-Token`；浏览器中的令牌只存在于设置页组件内存，刷新或离开页面即清除。未设置管理员令牌时，配置接口只允许本机访问。
 
@@ -89,6 +89,8 @@ IDEA_SPARK_MODEL_TIMEOUT=600
 - Build command：`npm --prefix ../frontend ci && npm --prefix ../frontend run build`
 - Deploy command：`uv run pywrangler deploy`
 - Runtime secrets：`IDEA_SPARK_ADMIN_TOKEN`、模型 Base URL、模型名与 API Key
+- Account secrets：`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`
+- D1：`idea-spark-production`（用户、会话、项目、方案与用量账本）
 
 敏感值只配置在 Cloudflare Worker 的 Variables & Secrets 中；仓库与构建变量中不保存明文密钥。Python Workers 目前仍处于 Cloudflare open beta，生产使用前应持续关注运行时兼容性与限制。
 
@@ -129,10 +131,18 @@ backend/
   tests/                    后端回归测试
 ```
 
-## 安全与数据边界
+## 商业权限与数据边界
 
+- GitHub OAuth 登录成功后签发 `HttpOnly + Secure + SameSite=Lax` 服务端会话；数据库只保存 token 哈希。
+- 免费额度由服务端 D1 账本判定，默认每个账户 5 个 Idea、2 个详细方案；客户端数字不参与授权。
+- 生成接口要求幂等键并先占用额度，失败或中断会退回；已存在的详细方案直接读取且不重复扣额。
+- 每个项目、历史和详细方案查询都同时包含 `user_id`，禁止跨用户读取与删除。
 - 默认 CORS 仅允许本地前端来源，可通过 `CORS_ORIGINS` 配置。
 - 模型配置不落盘；公网配置接口必须使用管理员令牌。
-- 未完成的生成会话会在 pipeline 失败时清理。
+- 未完成的生成项目会标记失败并退回占用额度。
 - 无效或数量不符的模型 JSON 会显式失败，不使用伪造 fallback 结果冒充成功。
-- 当前会话存储在单进程内存中，服务重启后清空；持久化数据库应在需要多实例或长期历史时再引入。
+- 历史记录持久化到 D1，并按认证用户隔离；登录后可显式导入旧版浏览器本地记录。
+
+## License
+
+Copyright © 2026 Edward. All rights reserved. 本仓库当前版本采用专有源码许可证，仅允许查看和评估；未经书面授权，不得复制、修改、部署、提供 SaaS 或商业使用。历史上已经按 MIT 发布的版本不受本次变更追溯影响。

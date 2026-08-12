@@ -14,7 +14,7 @@
 
 ![Idea Spark](https://img.shields.io/badge/IDEA_SPARK-OPPORTUNITY_WORKBENCH-15131A?style=flat-square)
 ![Version](https://img.shields.io/badge/VERSION-2.0.0-6D4AFF?style=flat-square)
-![License](https://img.shields.io/badge/LICENSE-MIT-2AAE8A?style=flat-square)
+![License](https://img.shields.io/badge/LICENSE-PROPRIETARY-6D28D9?style=flat-square)
 
 </div>
 
@@ -36,7 +36,7 @@ Model judgments are not verified market facts. The UI separates `evidence`, `ass
 
 - Frontend: React 19, Vite 8, Node test, oxlint
 - Backend: FastAPI, Pydantic 2, aiohttp, pytest
-- Models: user-provided OpenAI-compatible endpoint with per-run model selection
+- Models: platform-managed OpenAI-compatible endpoint with per-run selection from authorized models
 
 ## Local setup
 
@@ -59,9 +59,9 @@ cd ..
 
 ## Model connection
 
-Configure an OpenAI-compatible `/v1` Base URL, API key, and default model in Model Settings. After model discovery, users can choose a model for each workbench run.
+Deployment administrators inject the OpenAI-compatible `/v1` Base URL, API key, and default model as secrets. Signed-in users may choose only from models authorized by the platform and cannot read or change upstream credentials.
 
-Configuration is never written to a file or database. Startup values come from environment variables; UI changes live only in backend process memory and reset after restart.
+Configuration is never written to a file or database. Startup values come from environment variables or Worker secrets; admin-token-protected runtime changes live only in process memory and reset after restart.
 
 ```bash
 IDEA_SPARK_ADMIN_TOKEN=<strong-random-token>
@@ -83,6 +83,8 @@ The repository includes a Cloudflare Python Worker configuration that serves the
 - Build command: `npm --prefix ../frontend ci && npm --prefix ../frontend run build`
 - Deploy command: `uv run pywrangler deploy`
 - Runtime secrets: admin token, model Base URL, model name, and API key
+- Account secrets: `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`
+- D1: `idea-spark-production` for users, sessions, projects, plans, and usage events
 
 Keep secret values in Cloudflare Worker Variables & Secrets, never in the repository or build variables. Cloudflare Python Workers are currently in open beta, so production use should continue to track runtime compatibility and limits.
 
@@ -96,10 +98,18 @@ Run before delivery:
 
 This runs frontend lint, Node tests, production build, backend pytest, Python compilation, and whitespace validation. General coding-agent instructions live in [`AGENTS.md`](AGENTS.md).
 
-## Security and data boundaries
+## Commercial access and data boundaries
 
+- GitHub OAuth issues an `HttpOnly`, `Secure`, `SameSite=Lax` server-side session; only its hash is stored.
+- Server-side D1 usage accounting grants 5 ideas and 2 detailed plans per account by default. Client counters are never trusted for authorization.
+- Generation requires idempotency keys, reserves usage before model work, and refunds failed or interrupted work. Cached detailed plans do not charge twice.
+- Every project, history, and plan query is scoped by authenticated `user_id`.
 - CORS defaults to local frontend origins and can be set with `CORS_ORIGINS`.
 - Model configuration is process-memory only; secrets are never returned by the API.
 - Workbench requests may only select the configured default model or a model discovered from the endpoint.
 - Invalid model JSON fails explicitly instead of returning fabricated fallback output.
-- Sessions are stored in single-process memory and reset after restart.
+- History is persisted in D1 and isolated per authenticated user. Users may explicitly import legacy browser-local sessions.
+
+## License
+
+Copyright © 2026 Edward. All rights reserved. The current source is viewable for evaluation only and may not be copied, modified, deployed, offered as SaaS, or used commercially without written permission. Versions previously released under MIT remain governed by their original license.

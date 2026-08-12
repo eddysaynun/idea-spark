@@ -4,7 +4,7 @@ import { useApp } from '../context/app-context';
 import './HistoryPage.css';
 
 const HistoryPage = ({ onOpenSession }) => {
-  const { sessions, deleteSession } = useApp();
+  const { sessions, deleteSession, currentSession, importLocalSession, user } = useApp();
 
   return (
     <div className="content-page history-page">
@@ -13,6 +13,9 @@ const HistoryPage = ({ onOpenSession }) => {
         <h1>历史探索</h1>
         <p>重新打开一次探索，继续比较机会或生成详细方案。</p>
       </div>
+      {user && currentSession?.ideas?.length > 0 && !sessions.some((item) => item.id === currentSession.id) && (
+        <div className="local-import"><div><strong>发现浏览器中的旧探索</strong><span>确认后导入到你的私有账户历史。</span></div><button onClick={importLocalSession}>导入旧探索</button></div>
+      )}
 
       {sessions.length === 0 ? (
         <div className="page-empty"><Clock3 size={28} /><h2>还没有历史记录</h2><p>完成第一次机会探索后，会话会出现在这里。</p></div>

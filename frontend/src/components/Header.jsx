@@ -1,12 +1,14 @@
-import { Archive, Settings, Sparkles } from 'lucide-react';
+import { Archive, LogIn, LogOut, Sparkles } from 'lucide-react';
+
+import { useApp } from '../context/app-context';
 
 import './Header.css';
 
 const Header = ({ currentPage, onPageChange }) => {
+  const { user, logout, loginUrl } = useApp();
   const items = [
     { id: 'generate', label: '工作台', icon: Sparkles },
     { id: 'history', label: '历史', icon: Archive },
-    { id: 'settings', label: '模型设置', icon: Settings },
   ];
 
   return (
@@ -30,6 +32,9 @@ const Header = ({ currentPage, onPageChange }) => {
           </button>
         ))}
       </nav>
+      <div className="account-control">
+        {user ? <><span>{user.display_name}</span><button onClick={logout} aria-label="退出登录"><LogOut size={16} /></button></> : <a href={loginUrl('/')}><LogIn size={16} /> 登录</a>}
+      </div>
     </header>
   );
 };

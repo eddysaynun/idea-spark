@@ -4,7 +4,6 @@ import Header from './components/Header';
 import DetailPage from './components/DetailPage';
 import GeneratePage from './components/GeneratePage';
 import HistoryPage from './components/HistoryPage';
-import SettingsPage from './components/SettingsPage';
 import { useApp } from './context/app-context';
 import './App.css';
 
@@ -32,7 +31,6 @@ function App() {
         {currentPage === 'generate' && <GeneratePage onOpenIdea={openIdea} />}
         {currentPage === 'detail' && <DetailPage onBack={() => setCurrentPage('generate')} />}
         {currentPage === 'history' && <HistoryPage onOpenSession={openSession} />}
-        {currentPage === 'settings' && <SettingsPage />}
       </main>
     </div>
   );

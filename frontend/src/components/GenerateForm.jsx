@@ -15,9 +15,12 @@ const categories = [
 const examples = ['独立开发者验证需求', '本地优先的团队知识工具', 'AI 辅助售后工作流'];
 
 const GenerateForm = () => {
-  const { availableModels, config, isGenerating, generateIdeas, cancelGeneration } = useApp();
+  const { availableModels, config, isGenerating, generateIdeas, cancelGeneration, user, loginUrl } = useApp();
   const [direction, setDirection] = useState('');
-  const [count, setCount] = useState(5);
+  const remainingIdeas = user
+    ? Math.max(0, user.quota.idea.limit - user.quota.idea.used - user.quota.idea.reserved)
+    : 5;
+  const count = Math.min(5, remainingIdeas);
   const [category, setCategory] = useState('general');
   const [model, setModel] = useState('');
 
@@ -62,12 +65,7 @@ const GenerateForm = () => {
             {categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
-        <label>
-          定稿数量
-          <select value={count} onChange={(event) => setCount(Number(event.target.value))} disabled={isGenerating}>
-            {[3, 5, 8, 12].map((value) => <option key={value} value={value}>{value} 个</option>)}
-          </select>
-        </label>
+        <label>剩余免费候选<input value={`${remainingIdeas} 个`} disabled readOnly /></label>
       </div>
 
       <label className="model-field">
@@ -79,13 +77,15 @@ const GenerateForm = () => {
         </select>
       </label>
 
-      {isGenerating ? (
+      {!user ? (
+        <a className="generate-action" href={loginUrl('/')}>使用 GitHub 登录并领取免费额度 <ArrowRight size={18} /></a>
+      ) : isGenerating ? (
         <button type="button" className="generate-action stop" onClick={cancelGeneration}>
           <Square size={16} fill="currentColor" /> 停止生成
         </button>
       ) : (
-        <button type="submit" className="generate-action" disabled={direction.trim().length < 2 || !selectedModel}>
-          <WandSparkles size={18} /> 开始机会探索 <ArrowRight size={18} />
+        <button type="submit" className="generate-action" disabled={direction.trim().length < 2 || !selectedModel || count < 1}>
+          <WandSparkles size={18} /> {count < 1 ? '免费 Idea 额度已用完' : `生成 ${count} 个候选`} <ArrowRight size={18} />
         </button>
       )}
     </form>

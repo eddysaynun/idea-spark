@@ -1,10 +1,9 @@
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import Request
 from pydantic import ValidationError
 
 from routers.ideas_router import generate_detail
-from schemas.models import DetailRequest, IdeaItem
-from services.idea_service import IdeaService
+from schemas.models import DetailRequest, GenerateRequest, IdeaItem
 
 
 def idea_payload():
@@ -29,29 +28,14 @@ def idea_payload():
     }
 
 
-def test_detail_request_accepts_validated_idea_snapshot():
-    request = DetailRequest(session_id="missing-in-this-isolate", idea_index=0, idea=idea_payload())
-
-    assert request.idea is not None
-    assert request.idea.name == "Snapshot Idea"
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [("score", 11), ("confidence", "certain"), ("unexpected", "value")],
-)
-def test_detail_request_rejects_invalid_idea_snapshot(field, value):
-    payload = idea_payload()
-    payload[field] = value
-
-    with pytest.raises(ValidationError):
-        DetailRequest(session_id="session", idea_index=0, idea=payload)
-
-
-def test_detail_request_keeps_session_only_compatibility():
+def test_detail_request_only_requires_server_owned_project_reference():
     request = DetailRequest(session_id="existing-session", idea_index=1)
 
-    assert request.idea is None
+    assert request.session_id == "existing-session"
+
+
+def test_generate_request_can_consume_final_remaining_idea():
+    assert GenerateRequest(direction="最后一次验证", count=1).count == 1
 
 
 def test_idea_snapshot_rejects_empty_required_content():
@@ -62,31 +46,30 @@ def test_idea_snapshot_rejects_empty_required_content():
         IdeaItem(**payload)
 
 
-async def test_detail_route_uses_snapshot_without_session_lookup(monkeypatch):
-    class SnapshotService:
-        async def generate_detail_for_idea(self, idea, model):
-            assert idea.name == "Snapshot Idea"
-            assert model == "selected-model"
-            return "# 落地方案\n\n" + "可执行内容。" * 40
+class CachedProjectStore:
+    def __init__(self):
+        self.reserve_calls = 0
 
-    def fail_session_lookup(_session_id):
-        raise AssertionError("snapshot path must not read process memory")
+    async def get_project(self, user_id, project_id):
+        assert user_id == "user-1"
+        assert project_id == "project-1"
+        return {"ideas": [idea_payload()], "detailed_plans": {"0": "already generated"}}
 
-    monkeypatch.setattr(IdeaService, "get_session", fail_session_lookup)
-    app = FastAPI()
-    app.state.idea_service = SnapshotService()
-    request = Request({"type": "http", "app": app})
+    async def reserve_quota(self, *args):
+        self.reserve_calls += 1
+        return "reserved"
+
+
+async def test_cached_detail_does_not_consume_quota():
+    store = CachedProjectStore()
+    request = Request({"type": "http", "app": type("App", (), {"state": type("State", (), {"account_store": store})()})()})
 
     response = await generate_detail(
         request,
-        DetailRequest(
-            session_id="missing-in-this-isolate",
-            idea_index=0,
-            model="selected-model",
-            idea=idea_payload(),
-        ),
+        DetailRequest(session_id="project-1", idea_index=0),
+        user={"id": "user-1"},
+        idempotency_key="detail-request-key-0001",
     )
 
-    assert response.success is True
-    assert response.idea["name"] == "Snapshot Idea"
-    assert response.detailed_plan.startswith("# 落地方案")
+    assert response.detailed_plan == "already generated"
+    assert store.reserve_calls == 0

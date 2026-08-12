@@ -15,13 +15,16 @@ else
   exit 1
 fi
 
-echo "[1/3] Frontend lint, tests, and production build"
+echo "[1/4] Frontend lint, tests, and production build"
 (cd "$PROJECT_DIR/frontend" && "$PACKAGE_MANAGER" run check)
 
-echo "[2/3] Backend tests and syntax compilation"
+echo "[2/4] Backend tests and syntax compilation"
 (cd "$PROJECT_DIR/backend" && uv run pytest -q && uv run python -m compileall -q .)
 
-echo "[3/3] Diff whitespace validation"
+echo "[3/4] Model proxy tests"
+(cd "$PROJECT_DIR" && node --test model-proxy/src/index.test.js)
+
+echo "[4/4] Diff whitespace validation"
 (cd "$PROJECT_DIR" && git diff --check)
 
 echo "All checks passed."

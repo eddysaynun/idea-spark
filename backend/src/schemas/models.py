@@ -53,7 +53,7 @@ class IdeaItem(BaseModel):
 class GenerateRequest(BaseModel):
     """生成 Ideas 请求"""
     direction: str = Field(..., min_length=2, max_length=500, description="项目方向")
-    count: int = Field(5, ge=3, le=12, description="生成数量")
+    count: int = Field(5, ge=1, le=12, description="生成数量")
     category: Literal["general", "ai-agent", "dev-tools", "privacy", "productivity"] = Field(
         "general", description="分类"
     )
@@ -73,7 +73,6 @@ class DetailRequest(BaseModel):
     session_id: str = Field(..., description="会话 ID")
     idea_index: int = Field(..., ge=0, description="Idea 索引")
     model: Optional[str] = Field(None, min_length=1, max_length=200, description="本次使用的模型")
-    idea: Optional[IdeaItem] = Field(None, description="当前 Idea 快照，用于无状态运行时生成详情")
 
 
 class DetailResponse(BaseModel):
@@ -81,6 +80,17 @@ class DetailResponse(BaseModel):
     success: bool
     idea: Dict[str, Any]
     detailed_plan: str
+
+
+class ImportProjectRequest(BaseModel):
+    """显式导入旧版浏览器本地探索。"""
+    idempotency_key: str = Field(..., min_length=16, max_length=200)
+    direction: str = Field(..., min_length=2, max_length=500)
+    count: int = Field(..., ge=1, le=12)
+    category: Literal["general", "ai-agent", "dev-tools", "privacy", "productivity"] = "general"
+    model: str = Field(..., min_length=1, max_length=200)
+    ideas: List[IdeaItem] = Field(..., min_length=1, max_length=12)
+    detailed_plans: Dict[str, str] = Field(default_factory=dict)
 
 
 # ============ Session Schema ============

@@ -3,14 +3,15 @@
 import asyncio
 import json
 import logging
-from typing import AsyncGenerator, AsyncIterator, Literal, Optional
+from typing import AsyncGenerator, AsyncIterator, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from services.agents.idea_agent import IdeaItem
 from services.agents.idea_pipeline import IdeaPipeline
-from services.idea_service import IdeaService
+from schemas.models import GenerateRequest
+from services.auth import current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["stream"])
@@ -46,26 +47,40 @@ async def with_heartbeat(
             await asyncio.gather(pending, return_exceptions=True)
 
 
-@router.get("/generate-stream")
+@router.post("/generate-stream")
 async def generate_ideas_stream(
     request: Request,
-    direction: str = Query(..., min_length=2, max_length=500),
-    count: int = Query(5, ge=3, le=12),
-    category: Literal["general", "ai-agent", "dev-tools", "privacy", "productivity"] = "general",
-    model: str = Query("", max_length=200),
+    body: GenerateRequest,
+    user=Depends(current_user),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=16, max_length=200),
 ):
     try:
-        selected_model = request.app.state.model_client.validate_model(model)
+        selected_model = request.app.state.model_client.validate_model(body.model or "")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    reservation = await request.app.state.account_store.reserve_quota(
+        user["id"], idempotency_key, "idea", body.count
+    )
+    if reservation == "duplicate":
+        raise HTTPException(status_code=409, detail="请勿重复提交同一生成请求")
+    if reservation == "denied":
+        raise HTTPException(status_code=402, detail="免费 Idea 额度不足")
+    try:
+        project = await request.app.state.account_store.create_project(
+            user["id"], body.direction.strip(), body.count, body.category, selected_model
+        )
+    except Exception:
+        await request.app.state.account_store.settle_quota(
+            user["id"], "", idempotency_key, "idea", body.count, False
+        )
+        raise
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        session = IdeaService.create_session(direction.strip(), count, category, selected_model)
         ideas = []
-        yield sse({"type": "start", "data": {"session_id": session["id"], "direction": direction}})
         try:
+            yield sse({"type": "start", "data": {"session_id": project["id"], "direction": body.direction}})
             pipeline = IdeaPipeline(request.app.state.model_client, selected_model)
-            events = pipeline.run_events(direction.strip(), count, category)
+            events = pipeline.run_events(body.direction.strip(), body.count, body.category)
             async for event in with_heartbeat(events):
                 if event is None:
                     yield ": heartbeat\n\n"
@@ -74,10 +89,25 @@ async def generate_ideas_stream(
                     ideas.append(IdeaItem(**event["data"]))
                 yield sse(event)
 
-            IdeaService.complete_session(session["id"], ideas)
-            yield sse({"type": "complete", "data": {"total": len(ideas), "session_id": session["id"]}})
+            payload = [vars(idea) for idea in ideas]
+            await request.app.state.account_store.complete_project(user["id"], project["id"], payload)
+            await request.app.state.account_store.settle_quota(
+                user["id"], project["id"], idempotency_key, "idea", body.count, True
+            )
+            yield sse({"type": "complete", "data": {"total": len(ideas), "session_id": project["id"]}})
+        except asyncio.CancelledError:
+            project_id = project["id"]
+            await request.app.state.account_store.fail_project(user["id"], project_id)
+            await request.app.state.account_store.settle_quota(
+                user["id"], project_id, idempotency_key, "idea", body.count, False
+            )
+            raise
         except Exception:
-            IdeaService.sessions.pop(session["id"], None)
+            project_id = project["id"]
+            await request.app.state.account_store.fail_project(user["id"], project_id)
+            await request.app.state.account_store.settle_quota(
+                user["id"], project_id, idempotency_key, "idea", body.count, False
+            )
             logger.exception("Idea pipeline failed")
             yield sse({"type": "error", "data": {"message": "生成流程未能完成，请检查模型配置后重试"}})
 

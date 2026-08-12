@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { configAPI, ideasAPI, sessionAPI } from '../api';
+import { authAPI, configAPI, ideasAPI, sessionAPI } from '../api';
 import { logger } from '../utils/logger';
 import { consumeSseStream } from '../utils/sse';
 import { AppContext } from './app-context';
@@ -28,6 +28,8 @@ export const AppProvider = ({ children }) => {
   const [ideas, setIdeas] = useState([]);
   const [sessions, setSessions] = useState([]);
   const abortRef = useRef(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [user, setUser] = useState(null);
 
   useEffect(() => {
     try {
@@ -39,6 +41,28 @@ export const AppProvider = ({ children }) => {
     } catch (error) {
       logger.warn('Ignoring invalid local session', error);
     }
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    setAuthLoading(true);
+    try {
+      const data = await authAPI.me();
+      setUser(data.user);
+      return data.user;
+    } catch {
+      setUser(null);
+      return null;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refreshUser(); }, [refreshUser]);
+
+  const logout = useCallback(async () => {
+    await authAPI.logout();
+    setUser(null);
+    setSessions([]);
   }, []);
 
   const persistSession = useCallback((session) => {
@@ -78,22 +102,39 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const loadModels = useCallback(async () => {
+    if (!user) return;
     try {
       const data = await configAPI.listModels();
       if (data.success) setAvailableModels(data.models);
     } catch (error) {
       logger.error('Failed to load models', error.message);
     }
-  }, []);
+  }, [user]);
 
   const loadSessions = useCallback(async () => {
+    if (!user) {
+      setSessions([]);
+      return;
+    }
     try {
       const data = await sessionAPI.listSessions();
       if (data.success) setSessions(data.sessions);
     } catch (error) {
       logger.error('Failed to load sessions', error);
     }
-  }, []);
+  }, [user]);
+
+  const importLocalSession = useCallback(async () => {
+    if (!user || !currentSession?.ideas?.length) return false;
+    const key = `local-import-${currentSession.id || crypto.randomUUID()}`;
+    const data = await sessionAPI.importLocal(currentSession, key);
+    if (!data.success) return false;
+    setCurrentSession(data.project);
+    setIdeas(data.project.ideas);
+    persistSession(data.project);
+    await loadSessions();
+    return true;
+  }, [currentSession, loadSessions, persistSession, user]);
 
   const generateIdeas = useCallback(async (direction, count, category, model) => {
     setIsGenerating(true);
@@ -109,8 +150,15 @@ export const AppProvider = ({ children }) => {
     let completed = false;
 
     try {
-      const query = new URLSearchParams({ direction, count: String(count), category, model });
-      const response = await fetch(`/api/generate-stream?${query}`, { signal: controller.signal });
+      if (!user) throw new Error('请先登录后开始探索');
+      const idempotencyKey = crypto.randomUUID();
+      const response = await fetch('/api/generate-stream', {
+        method: 'POST',
+        credentials: 'include',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify({ direction, count, category, model }),
+      });
       if (!response.ok) {
         const detail = await response.json().catch(() => null);
         throw new Error(detail?.detail || `请求失败 (${response.status})`);
@@ -159,6 +207,7 @@ export const AppProvider = ({ children }) => {
 
       if (!completed) throw new Error('数据流提前结束，请重试');
       await loadSessions();
+      await refreshUser();
       return collectedIdeas;
     } catch (error) {
       const message = error.name === 'AbortError' ? '已停止本次生成' : error.message;
@@ -169,7 +218,7 @@ export const AppProvider = ({ children }) => {
       abortRef.current = null;
       setIsGenerating(false);
     }
-  }, [loadSessions, persistSession]);
+  }, [loadSessions, persistSession, refreshUser, user]);
 
   const cancelGeneration = useCallback(() => abortRef.current?.abort(), []);
 
@@ -184,8 +233,8 @@ export const AppProvider = ({ children }) => {
     const data = await ideasAPI.getDetail(
       currentSession.id,
       currentIdeaIndex,
-      currentSession.ideas[currentIdeaIndex],
       currentSession.model,
+      crypto.randomUUID(),
     );
     if (!data.success) return null;
 
@@ -198,8 +247,9 @@ export const AppProvider = ({ children }) => {
     };
     setCurrentSession(session);
     persistSession(session);
+    await refreshUser();
     return data.detailed_plan;
-  }, [currentIdeaIndex, currentSession, persistSession]);
+  }, [currentIdeaIndex, currentSession, persistSession, refreshUser]);
 
   const loadSession = useCallback(async (sessionId) => {
     const data = await sessionAPI.getSession(sessionId);
@@ -226,6 +276,7 @@ export const AppProvider = ({ children }) => {
   }, [currentSession, loadSessions]);
 
   const value = {
+    authLoading, user, refreshUser, logout, loginUrl: authAPI.loginUrl, importLocalSession,
     config, loadConfig, saveConfig, availableModels, loadModels,
     isGenerating, progress, generationError, generateIdeas, cancelGeneration,
     currentSession, currentIdeaIndex, ideas, sessions,

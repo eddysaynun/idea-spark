@@ -10,6 +10,7 @@ const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  withCredentials: true,
 });
 
 // 请求拦截器
@@ -67,6 +68,12 @@ export const configAPI = {
   },
 };
 
+export const authAPI = {
+  me: async () => (await apiClient.get('/auth/me')).data,
+  logout: async () => (await apiClient.post('/auth/logout')).data,
+  loginUrl: (returnTo = '/') => `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`,
+};
+
 // Ideas 生成
 export const ideasAPI = {
   // 生成 Ideas
@@ -76,19 +83,27 @@ export const ideasAPI = {
   },
 
   // 获取详细方案
-  getDetail: async (sessionId, ideaIndex, idea, model = '') => {
+  getDetail: async (sessionId, ideaIndex, model = '', idempotencyKey) => {
     const response = await apiClient.post('/detail', {
       session_id: sessionId,
       idea_index: ideaIndex,
       model: model || undefined,
-      idea,
-    }, { timeout: 180000 });
+    }, { timeout: 180000, headers: { 'Idempotency-Key': idempotencyKey } });
     return response.data;
   },
 };
 
 // 会话管理
 export const sessionAPI = {
+  importLocal: async (session, idempotencyKey) => (await apiClient.post('/projects/import', {
+    idempotency_key: idempotencyKey,
+    direction: session.direction,
+    count: session.ideas.length,
+    category: session.category || 'general',
+    model: session.model,
+    ideas: session.ideas,
+    detailed_plans: session.detailed_plans || {},
+  })).data,
   // 获取会话列表
   listSessions: async () => {
     const response = await apiClient.get('/sessions');

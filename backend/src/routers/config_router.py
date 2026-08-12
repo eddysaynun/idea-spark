@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from schemas.models import ConfigRequest, ConfigResponse, DetectModelsResponse
+from services.auth import current_user
 
 router = APIRouter(tags=["config"])
 
@@ -85,7 +86,10 @@ async def detect_models(
 
 
 @router.get("/models", response_model=DetectModelsResponse)
-async def list_models(model_client=Depends(get_model_client)):
+async def list_models(
+    _user=Depends(current_user),
+    model_client=Depends(get_model_client),
+):
     """向工作台公开可选择的模型名称，不暴露连接和密钥配置。"""
     models = model_client.available_models()
     return DetectModelsResponse(success=bool(models), models=models)

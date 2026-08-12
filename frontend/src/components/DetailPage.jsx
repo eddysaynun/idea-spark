@@ -6,12 +6,15 @@ import { useApp } from '../context/app-context';
 import './DetailPage.css';
 
 const DetailPage = ({ onBack }) => {
-  const { currentSession, currentIdeaIndex, generateDetail } = useApp();
+  const { currentSession, currentIdeaIndex, generateDetail, user } = useApp();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const idea = currentSession?.ideas?.[currentIdeaIndex];
   const cachedPlan = currentSession?.detailed_plans?.[currentIdeaIndex] || '';
   const [plan, setPlan] = useState(cachedPlan);
+  const remainingDetails = user
+    ? Math.max(0, user.quota.detail.limit - user.quota.detail.used - user.quota.detail.reserved)
+    : 0;
 
   useEffect(() => setPlan(cachedPlan), [cachedPlan]);
 
@@ -61,7 +64,7 @@ const DetailPage = ({ onBack }) => {
 
       <section className="plan-section">
         <div><p className="panel-index">DEEP DIVE</p><h2>落地方案</h2></div>
-        {!plan && <button className="generate-action" onClick={createPlan} disabled={loading}>{loading ? <LoaderCircle className="spin" size={18} /> : null}{loading ? '正在深化…' : '生成详细落地方案'}</button>}
+        {!plan && <button className="generate-action" onClick={createPlan} disabled={loading || remainingDetails < 1}>{loading ? <LoaderCircle className="spin" size={18} /> : null}{loading ? '正在深化…' : remainingDetails < 1 ? '免费详细方案额度已用完' : `生成详细落地方案（剩余 ${remainingDetails} 次）`}</button>}
         {error && <div className="inline-error" role="alert">{error}</div>}
         {plan && <article className="markdown"><ReactMarkdown>{plan}</ReactMarkdown></article>}
       </section>

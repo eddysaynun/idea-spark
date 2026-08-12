@@ -20,6 +20,18 @@
       "service": "idea-spark-model-proxy"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "idea-spark-production",
+      "database_id": "4bd38132-0d61-474c-a0dc-44401bdb8337",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "FREE_IDEA_LIMIT": "5",
+    "FREE_DETAIL_LIMIT": "2"
+  },
   "routes": [
     {
       "pattern": "idea-spark.heyedwardchen.com",

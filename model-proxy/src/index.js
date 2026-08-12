@@ -1,5 +1,7 @@
 const UPSTREAM_ORIGIN = 'http://qwen-origin.heyedwardchen.com:6091';
 const ALLOWED_PATHS = new Set(['/v1/models', '/v1/chat/completions']);
+const ALLOWED_METHODS = new Map([['/v1/models', 'GET'], ['/v1/chat/completions', 'POST']]);
+const MAX_BODY_BYTES = 1_000_000;
 
 function unauthorized() {
   return new Response(JSON.stringify({ error: { message: 'Unauthorized' } }), {
@@ -26,6 +28,13 @@ export default {
     const url = new URL(request.url);
     if (!ALLOWED_PATHS.has(url.pathname)) {
       return new Response('Not found', { status: 404 });
+    }
+    if (request.method !== ALLOWED_METHODS.get(url.pathname)) {
+      return new Response('Method not allowed', { status: 405, headers: { allow: ALLOWED_METHODS.get(url.pathname) } });
+    }
+    const contentLength = Number(request.headers.get('content-length') || 0);
+    if (contentLength > MAX_BODY_BYTES) {
+      return new Response('Payload too large', { status: 413 });
     }
 
     const expected = `Bearer ${env.PROXY_API_KEY}`;
