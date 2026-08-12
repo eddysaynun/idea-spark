@@ -3,9 +3,9 @@
   "private": true,
   "version": "2.0.0",
   "description": "AI-powered opportunity workbench",
-  "main": "backend/app.py",
+  "main": "backend/src/app.py",
   "scripts": {
-    "start": "python backend/app.py",
+    "start": "python backend/src/app.py",
     "dev": "./start.sh",
     "check": "./scripts/check.sh",
     "build": "npm --prefix frontend ci && npm --prefix frontend run build",

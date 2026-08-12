@@ -1,6 +1,4 @@
-"""
-FastAPI Application - Idea Spark Backend
-"""
+"""FastAPI application for Idea Spark."""
 
 import logging
 import os

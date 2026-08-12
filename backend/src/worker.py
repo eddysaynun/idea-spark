@@ -1,4 +1,4 @@
-"""Cloudflare Python Worker 入口。"""
+"""Cloudflare Python Worker production entrypoint."""
 
 import os
 
