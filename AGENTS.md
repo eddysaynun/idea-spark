@@ -21,6 +21,14 @@
 - 不新增状态库、路由库、Agent 框架或测试框架，除非现有 React/FastAPI/pytest/Node test 无法满足且有可验证理由。
 - 不以 lint、类型检查、单元测试或 build 中任意一项代替完整回归。
 
+## GitHub 推送规则
+
+- 本机向 GitHub 推送时，必须显式绕过全局 `pre-push` hook，统一使用：
+  `git -c core.hooksPath=/dev/null push origin <branch>`。
+- 当前主分支的标准命令是：`git -c core.hooksPath=/dev/null push origin main`。
+- 该规则只适用于 GitHub；GitLab 或其他远端继续使用各自的正常推送与审核流程。
+- 只绕过本机全局推送拦截，不得使用 `--no-verify` 跳过提交检查，也不得使用 `--force`，除非用户明确授权。
+
 ## 架构事实
 
 - 前端：React + Vite；共享状态在 `frontend/src/context/AppContext.jsx`，SSE 解析在 `frontend/src/utils/sse.js`。
