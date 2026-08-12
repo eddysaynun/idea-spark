@@ -17,7 +17,7 @@ class FakeModelClient:
             raise ValueError("所选模型不可用")
         return model or self.config.model
 
-    async def generate_stream(self, _prompt, _model=None):
+    async def generate_stream(self, _prompt, _model=None, **_options):
         payload = [
             {
                 "name": f"Idea {index}",
@@ -38,7 +38,7 @@ class FakeModelClient:
         ]
         yield {"type": "content", "data": json.dumps(payload)}
 
-    async def generate(self, _prompt, _model=None):
+    async def generate(self, _prompt, _model=None, **_options):
         self.generate_calls += 1
         if self.generate_calls == 1:
             return json.dumps([

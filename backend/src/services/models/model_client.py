@@ -51,7 +51,14 @@ class ModelClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10)
     )
-    async def generate(self, prompt: str, model: Optional[str] = None) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        *,
+        thinking: bool = False,
+        max_tokens: Optional[int] = None,
+    ) -> str:
         """
         生成文本（非流式）
         
@@ -70,12 +77,21 @@ class ModelClient:
             )
         
         try:
-            return await self._call_compatible(prompt, model)
+            return await self._call_compatible(
+                prompt, model, thinking=thinking, max_tokens=max_tokens
+            )
         except Exception as e:
             logger.error(f"Model generation failed: {e}")
             raise
 
-    async def generate_stream(self, prompt: str, model: Optional[str] = None):
+    async def generate_stream(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        *,
+        thinking: bool = False,
+        max_tokens: Optional[int] = None,
+    ):
         """
         流式生成文本
         
@@ -94,13 +110,22 @@ class ModelClient:
             )
         
         try:
-            async for chunk in self._call_compatible_stream(prompt, model):
+            async for chunk in self._call_compatible_stream(
+                prompt, model, thinking=thinking, max_tokens=max_tokens
+            ):
                 yield chunk
         except Exception as e:
             logger.error(f"Model stream generation failed: {e}")
             yield {"type": "error", "data": str(e)}
     
-    async def _call_compatible(self, prompt: str, model_override: Optional[str] = None) -> str:
+    async def _call_compatible(
+        self,
+        prompt: str,
+        model_override: Optional[str] = None,
+        *,
+        thinking: bool = False,
+        max_tokens: Optional[int] = None,
+    ) -> str:
         """调用 OpenAI-compatible API（非流式）。"""
         url = f"{self.config.base_url.rstrip('/')}/chat/completions"
         
@@ -124,10 +149,10 @@ class ModelClient:
                 {"role": "user", "content": prompt}
             ],
             "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": max_tokens or self.config.max_tokens,
             "stream": False  # 非流式
         }
-        self._apply_model_compatibility(payload, model)
+        self._apply_model_compatibility(payload, model, thinking)
         
         logger.info(f"📡 Calling compatible API: {url} with model: {model}")
         logger.debug(f"📝 Request payload: {json.dumps(payload, ensure_ascii=False)[:500]}")
@@ -153,7 +178,14 @@ class ModelClient:
             text_data = await response.text()
             return self._parse_completion_response(response.status, text_data)
 
-    async def _call_compatible_stream(self, prompt: str, model_override: Optional[str] = None):
+    async def _call_compatible_stream(
+        self,
+        prompt: str,
+        model_override: Optional[str] = None,
+        *,
+        thinking: bool = False,
+        max_tokens: Optional[int] = None,
+    ):
         """调用 OpenAI-compatible API（流式）。"""
         url = f"{self.config.base_url.rstrip('/')}/chat/completions"
         
@@ -178,10 +210,10 @@ class ModelClient:
                 {"role": "user", "content": prompt}
             ],
             "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": max_tokens or self.config.max_tokens,
             "stream": True  # 流式
         }
-        self._apply_model_compatibility(payload, model)
+        self._apply_model_compatibility(payload, model, thinking)
         
         logger.info(f"📡 Calling compatible API (stream): {url} with model: {model}")
         
@@ -302,11 +334,13 @@ class ModelClient:
                 yield {"type": "content", "data": content}
 
     @staticmethod
-    def _apply_model_compatibility(payload: Dict[str, Any], model: str) -> None:
+    def _apply_model_compatibility(
+        payload: Dict[str, Any], model: str, thinking: bool
+    ) -> None:
         """为已知模型添加其 OpenAI-compatible 扩展参数。"""
         normalized = model.lower().replace("-", "").replace("_", "")
         if "qwen35" in normalized or "qwen3.5" in model.lower():
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
+            payload["chat_template_kwargs"] = {"enable_thinking": thinking}
 
     @staticmethod
     def _extract_stream_parts(choice: Dict[str, Any]):

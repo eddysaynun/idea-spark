@@ -24,7 +24,9 @@ class IdeaPipeline:
         reasoning_preview = ""
         content_preview = ""
         async for chunk in self.model_client.generate_stream(
-            self._explorer_prompt(direction, candidate_count, category), self.model
+            self._explorer_prompt(direction, candidate_count, category),
+            self.model,
+            thinking=False,
         ):
             if chunk["type"] == "thinking":
                 reasoning_preview += chunk["data"]
@@ -55,14 +57,32 @@ class IdeaPipeline:
             candidates = self.parser._parse_ideas_response(repaired, candidate_count)
         yield self._progress("批判评估", 48, "正在检查痛点强度、差异化、可执行性与证据缺口…")
         critiques = await self._generate_json(
-            "批判评估", self._critic_prompt(direction, candidates), len(candidates)
+            "批判评估",
+            self._critic_prompt(direction, candidates),
+            len(candidates),
+            thinking=True,
         )
 
         yield self._progress("结构化定稿", 76, f"正在去重并定稿最有潜力的 {count} 个机会…")
         final_data = await self._generate_json(
             "结构化定稿", self._editor_prompt(direction, count, candidates, critiques), count
         )
-        ideas = self.parser._validate_and_enrich(final_data, count)
+        try:
+            ideas = self.parser._validate_and_enrich(final_data, count)
+        except ValueError as exc:
+            repaired = await self.model_client.generate(
+                self._repair_prompt(
+                    "结构化定稿字段契约",
+                    count,
+                    json.dumps(final_data, ensure_ascii=False),
+                    str(exc),
+                ),
+                self.model,
+                thinking=False,
+            )
+            ideas = self.parser._validate_and_enrich(
+                self.parser._parse_ideas_response(repaired, count), count
+            )
 
         for index, idea in enumerate(ideas, 1):
             yield {"type": "idea", "data": vars(idea), "index": index}
@@ -72,13 +92,27 @@ class IdeaPipeline:
     def _progress(step: str, progress: int, message: str) -> Dict[str, Any]:
         return {"type": "progress", "data": {"step": step, "progress": progress, "message": message}}
 
-    async def _generate_json(self, stage: str, prompt: str, expected_count: int) -> list:
-        content = await self.model_client.generate(prompt, self.model)
+    async def _generate_json(
+        self,
+        stage: str,
+        prompt: str,
+        expected_count: int,
+        *,
+        thinking: bool = False,
+    ) -> list:
+        content = await self.model_client.generate(
+            prompt,
+            self.model,
+            thinking=thinking,
+            max_tokens=32768 if thinking else None,
+        )
         try:
             return self.parser._parse_ideas_response(content, expected_count)
         except ValueError as exc:
             repaired = await self.model_client.generate(
-                self._repair_prompt(stage, expected_count, content, str(exc)), self.model
+                self._repair_prompt(stage, expected_count, content, str(exc)),
+                self.model,
+                thinking=False,
             )
             return self.parser._parse_ideas_response(repaired, expected_count)
 
@@ -86,6 +120,7 @@ class IdeaPipeline:
     def _repair_prompt(stage: str, expected_count: int, output: str, error: str) -> str:
         return f"""修复以下「{stage}」输出。错误：{error}
 只输出恰好 {expected_count} 项的合法 JSON 数组，不添加 Markdown 或说明；保留原有语义，不编造新的外部事实。
+tags、evidence、assumptions、risks 必须是字符串数组，不能是字符串；score 必须是 0-10 数字；confidence 只能是 low、medium、high。
 待修复输出：
 {output[:12000]}
 """
@@ -108,7 +143,7 @@ class IdeaPipeline:
     def _critic_prompt(direction: str, candidates: list) -> str:
         return f"""你是严格的产品投资评审。目标方向：{direction}。
 
-逐项评估候选，不美化、不补造事实。只输出 JSON 数组，每项包含 candidate_index、pain_score、differentiation_score、feasibility_score、monetization_score、evidence_score（均 0-10）、fatal_flaw、missing_evidence、recommendation（keep/rework/drop）。
+逐项深入推理并评估候选，不美化、不补造事实。内部完成比较后，只输出 JSON 数组，每项包含 candidate_index、pain_score、differentiation_score、feasibility_score、monetization_score、evidence_score（均 0-10）、fatal_flaw、missing_evidence、recommendation（keep/rework/drop）。
 
 候选：
 {json.dumps(candidates, ensure_ascii=False)}

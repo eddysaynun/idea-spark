@@ -103,6 +103,22 @@ async def test_qwen35_requests_disable_thinking_for_structured_output():
 
 
 @pytest.mark.asyncio
+async def test_qwen35_can_enable_thinking_per_stage():
+    response = FakeResponse({"choices": [{"message": {"content": "[]"}}]})
+    binding = FakeBinding(response)
+    client = ModelClient(
+        ModelConfig(base_url="https://qwen-api.example/v1", model="qwen35_27b"),
+        service_binding=binding,
+    )
+
+    await client.generate("criticize", thinking=True, max_tokens=32768)
+
+    request_body = __import__("json").loads(binding.calls[0][1]["body"])
+    assert request_body["chat_template_kwargs"] == {"enable_thinking": True}
+    assert request_body["max_tokens"] == 32768
+
+
+@pytest.mark.asyncio
 async def test_stream_reports_reasoning_without_final_content():
     binding = FakeBinding(FakeResponse(
         'data: {"choices":[{"delta":{"reasoning_content":"分析"}}]}\n\n'
