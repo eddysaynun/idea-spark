@@ -10,7 +10,9 @@
     "check": "./scripts/check.sh",
     "build": "npm --prefix frontend ci && npm --prefix frontend run build",
     "deploy": "npm run build && cd backend && uv run pywrangler deploy",
-    "preview": "npm run build && cd backend && uv run pywrangler dev"
+    "preview": "npm run build && cd backend && uv run pywrangler dev",
+    "test:model-proxy": "node --test model-proxy/src/index.test.js",
+    "deploy:model-proxy": "wrangler deploy --config model-proxy/wrangler.jsonc"
   },
   "keywords": ["ai", "ideas", "opportunities", "generator"],
   "author": "Edward",
