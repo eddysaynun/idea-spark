@@ -237,6 +237,15 @@ class AccountStore:
             user_id, min(max(limit, 1), 100),
         )
 
+    async def payment_order_id_for_provider(self, channel: str, provider_order_id: str) -> str:
+        order = await self._first(
+            "SELECT id FROM payment_orders WHERE channel = ? AND provider_order_id = ?",
+            channel, provider_order_id,
+        )
+        if not order:
+            raise ValueError("Payment order not found")
+        return order["id"]
+
     async def admin_payment_orders(self, status: str = "") -> List[Dict[str, Any]]:
         return await self._all(
             "SELECT o.id, o.user_id, u.login, u.display_name, o.package_id, o.package_name, o.idea_amount, "
@@ -267,7 +276,7 @@ class AccountStore:
             raise ValueError("Payment channel or amount mismatch")
         if order["status"] == "paid" and order.get("fulfilled_at"):
             return {"status": "duplicate", "order": order}
-        if order["status"] != "pending" or order["expires_at"] <= iso(utc_now()):
+        if order["status"] not in {"pending", "expired"}:
             raise ValueError("Payment order is not payable")
 
         now = iso(utc_now())
@@ -279,7 +288,7 @@ class AccountStore:
             ).bind(str(uuid.uuid4()), event_key, order_id, channel, event_type, provider_trade_id, amount_fen, payload_digest, now),
             self.db.prepare(
                 "UPDATE payment_orders SET status = 'paid', provider_trade_id = ?, paid_at = ?, updated_at = ? "
-                "WHERE id = ? AND status = 'pending' AND fulfilled_at IS NULL"
+                "WHERE id = ? AND status IN ('pending', 'expired') AND fulfilled_at IS NULL"
             ).bind(provider_trade_id[:200], now, now, order_id),
             self.db.prepare(
                 "UPDATE users SET idea_limit = idea_limit + ?, detail_limit = detail_limit + ?, updated_at = ? "

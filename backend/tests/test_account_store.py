@@ -194,6 +194,32 @@ async def test_verified_payment_fulfills_quota_once(store):
     assert refreshed == {"idea_limit": 65, "detail_limit": 22}
 
 
+async def test_verified_delayed_notification_fulfills_expired_order(store):
+    user = await create_user(store, "payment-delayed")
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+    order = await store.create_payment_order(user["id"], package, "alipay", expires_minutes=-1)
+    assert (await store.get_payment_order(user["id"], order["id"]))["status"] == "expired"
+
+    result = await store.fulfill_payment(
+        order["id"], "alipay", "event-delayed", "TRADE_SUCCESS", "trade-delayed", 2900, "digest", True
+    )
+
+    assert result["status"] == "fulfilled"
+    refreshed = await store._first("SELECT idea_limit, detail_limit FROM users WHERE id = ?", user["id"])
+    assert refreshed == {"idea_limit": 25, "detail_limit": 7}
+
+
+async def test_provider_order_resolves_internal_order_without_user_input(store):
+    user = await create_user(store, "provider-order")
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+    order = await store.create_payment_order(user["id"], package, "alipay")
+    await store.attach_payment_checkout(user["id"], order["id"], "IS-provider-order", "https://qr.alipay.com/order")
+
+    assert await store.payment_order_id_for_provider("alipay", "IS-provider-order") == order["id"]
+    with pytest.raises(ValueError, match="Payment order not found"):
+        await store.payment_order_id_for_provider("wechat", "IS-provider-order")
+
+
 @pytest.mark.parametrize("channel,amount", [("wechat", 7900), ("alipay", 7800)])
 async def test_payment_rejects_wrong_channel_or_amount(store, channel, amount):
     user = await create_user(store, f"mismatch-{channel}-{amount}")

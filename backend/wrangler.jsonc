@@ -37,7 +37,8 @@
     "AUTH_EMAIL_ENABLED": "true",
     "AUTH_GITHUB_ENABLED": "true",
     "AUTH_GOOGLE_ENABLED": "true",
-    "AUTH_APPLE_ENABLED": "false"
+    "AUTH_APPLE_ENABLED": "false",
+    "ALIPAY_ENABLED": "false"
   },
   "routes": [
     {

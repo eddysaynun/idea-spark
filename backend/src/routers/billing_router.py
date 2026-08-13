@@ -21,7 +21,7 @@ class PurchaseRequest(BaseModel):
 
 class PaymentOrderRequest(BaseModel):
     package_id: str = Field(..., min_length=2, max_length=40)
-    channel: str = Field(..., pattern="^(wechat|alipay)$")
+    channel: str = Field(..., pattern="^alipay$")
 
 
 def registry(request: Request):
@@ -92,7 +92,7 @@ async def create_order(body: PaymentOrderRequest, request: Request, user=Depends
 
 @router.post("/webhooks/{channel}")
 async def payment_webhook(channel: str, request: Request):
-    if channel not in {"wechat", "alipay"}:
+    if channel != "alipay":
         raise HTTPException(status_code=404, detail="支付渠道不存在")
     provider = registry(request).get(channel)
     if provider is None:
@@ -100,8 +100,10 @@ async def payment_webhook(channel: str, request: Request):
     body = await request.body()
     try:
         notice = await provider.verify_notification(dict(request.headers), body)
-        result = await request.app.state.account_store.fulfill_payment(
-            notice.order_id, channel, notice.event_key, notice.event_type,
+        store = request.app.state.account_store
+        order_id = await store.payment_order_id_for_provider(channel, notice.provider_order_id)
+        result = await store.fulfill_payment(
+            order_id, channel, notice.event_key, notice.event_type,
             notice.provider_trade_id, notice.amount_fen, notice.payload_digest, True,
         )
     except ValueError as exc:

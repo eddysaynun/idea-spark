@@ -24,6 +24,9 @@ echo "[2/4] Backend tests and syntax compilation"
 echo "[3/4] Model proxy tests"
 (cd "$PROJECT_DIR" && node --test model-proxy/src/index.test.js)
 
+echo "[3b/4] Payment gateway tests"
+(cd "$PROJECT_DIR" && node --test payment-gateway/src/index.test.js)
+
 echo "[4/4] Diff whitespace validation"
 (cd "$PROJECT_DIR" && git diff --check)
 
