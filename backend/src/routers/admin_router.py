@@ -21,6 +21,10 @@ class ReservationRepair(BaseModel):
     reason: str = Field(..., min_length=3, max_length=300)
 
 
+class PurchaseStatus(BaseModel):
+    status: Literal["fulfilled", "cancelled"]
+
+
 def store(request: Request):
     value = getattr(request.app.state, "account_store", None)
     if value is None:
@@ -54,3 +58,17 @@ async def repair_quota(user_id: str, body: ReservationRepair, request: Request):
 @router.get("/users/{user_id}/quota/audit")
 async def quota_audit(user_id: str, request: Request):
     return {"success": True, "events": await store(request).quota_audit(user_id)}
+
+
+@router.get("/purchase-requests")
+async def purchase_requests(request: Request, status: str = Query("pending", pattern="^(pending|fulfilled|cancelled|)$")):
+    return {"success": True, "requests": await store(request).admin_purchase_requests(status)}
+
+
+@router.patch("/purchase-requests/{request_id}")
+async def update_purchase_request(request_id: str, body: PurchaseStatus, request: Request):
+    try:
+        purchase = await store(request).update_purchase_request(request_id, body.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"success": True, "request": purchase}

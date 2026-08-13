@@ -1,6 +1,7 @@
 """Managed multi-provider authentication and commercial account sessions."""
 
 import logging
+import re
 from urllib.parse import urlencode
 
 import aiohttp
@@ -17,6 +18,13 @@ logger = logging.getLogger(__name__)
 
 class TokenExchange(BaseModel):
     access_token: str
+
+
+def _display_name(metadata: dict, email: str) -> str:
+    candidate = str(metadata.get("username") or metadata.get("full_name") or metadata.get("name") or "").strip()
+    if 2 <= len(candidate) <= 32 and re.fullmatch(r"[\w\- ]+", candidate, flags=re.UNICODE):
+        return candidate
+    return email.split("@")[0][:32] or "Idea Spark 用户"
 
 
 def _oauth_config(request: Request):
@@ -149,7 +157,7 @@ async def exchange_managed_token(request: Request, payload: TokenExchange, respo
         raise HTTPException(status_code=403, detail="请先完成邮箱验证")
     email = profile.get("email") or ""
     metadata = profile.get("user_metadata") or {}
-    display_name = metadata.get("full_name") or metadata.get("name") or email.split("@")[0] or "Idea Spark 用户"
+    display_name = _display_name(metadata, email)
     avatar_url = metadata.get("avatar_url") or metadata.get("picture") or ""
     user = await _account_store(request).upsert_identity_user(
         "supabase", str(profile["id"]), email or str(profile["id"]), display_name, avatar_url

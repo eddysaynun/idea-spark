@@ -12,6 +12,7 @@ export default function LoginPage({ onComplete }) {
   const [config, setConfig] = useState(null);
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -60,7 +61,10 @@ export default function LoginPage({ onComplete }) {
       if (mode === 'register') {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email, password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            data: { username: username.trim() },
+          },
         });
         if (signUpError) throw signUpError;
         if (!data.session) {
@@ -111,6 +115,7 @@ export default function LoginPage({ onComplete }) {
             <button className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>邮箱注册</button>
           </div>
           {enabled.email && <form onSubmit={submitEmail}>
+            {mode === 'register' && <label>用户名<input type="text" autoComplete="nickname" value={username} onChange={(e) => setUsername(e.target.value)} required minLength="2" maxLength="32" pattern="[\p{L}\p{N}_\- ]+" placeholder="你的公开显示名称" /></label>}
             <label>邮箱<input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@example.com" /></label>
             <label>密码<input type="password" minLength="8" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="至少 8 位" /></label>
             <button className="login-primary" disabled={busy}>{busy ? <LoaderCircle className="spin" size={18} /> : <Mail size={18} />}{mode === 'register' ? '创建账号' : '使用邮箱登录'}</button>

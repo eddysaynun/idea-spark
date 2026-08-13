@@ -84,9 +84,10 @@ const GenerateForm = () => {
           <Square size={16} fill="currentColor" /> 停止生成
         </button>
       ) : (
-        <button type="submit" className="generate-action" disabled={direction.trim().length < 2 || !selectedModel || count < 1}>
-          <WandSparkles size={18} /> {count < 1 ? '免费 Idea 额度已用完' : `生成 ${count} 个候选`} <ArrowRight size={18} />
-        </button>
+        count < 1 ? <a className="generate-action" href="/account">Idea 额度已用完，申请增加额度 <ArrowRight size={18} /></a> :
+          <button type="submit" className="generate-action" disabled={direction.trim().length < 2 || !selectedModel}>
+            <WandSparkles size={18} /> 生成 {count} 个候选 <ArrowRight size={18} />
+          </button>
       )}
     </form>
   );

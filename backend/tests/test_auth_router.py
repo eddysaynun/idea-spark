@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI, HTTPException, Request, Response
 
-from routers.auth_router import TokenExchange, _github_profile, exchange_managed_token
+from routers.auth_router import TokenExchange, _display_name, _github_profile, exchange_managed_token
 
 
 class FetchResponse:
@@ -14,6 +14,16 @@ class FetchResponse:
 
     async def json(self):
         return self.payload
+
+
+@pytest.mark.parametrize("metadata,expected", [
+    ({"username": "小陈 Builder"}, "小陈 Builder"),
+    ({"username": "dev_user-7"}, "dev_user-7"),
+    ({"username": "<script>"}, "person"),
+    ({"username": "x"}, "person"),
+])
+def test_managed_display_name_prefers_valid_registration_username(metadata, expected):
+    assert _display_name(metadata, "person@example.com") == expected
 
 
 async def test_github_oauth_uses_worker_native_fetch():

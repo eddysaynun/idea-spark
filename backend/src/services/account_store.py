@@ -126,6 +126,50 @@ class AccountStore:
         if token:
             await self._run("DELETE FROM user_sessions WHERE token_hash = ?", token_hash(token))
 
+    async def create_purchase_request(
+        self, user_id: str, package_id: str, idea_amount: int, detail_amount: int, note: str = ""
+    ) -> Dict[str, Any]:
+        existing = await self._first(
+            "SELECT * FROM quota_purchase_requests WHERE user_id = ? AND package_id = ? AND status = 'pending'",
+            user_id, package_id,
+        )
+        if existing:
+            return existing
+        request_id = str(uuid.uuid4())
+        now = iso(utc_now())
+        await self._run(
+            "INSERT INTO quota_purchase_requests(id, user_id, package_id, idea_amount, detail_amount, status, note, created_at, updated_at) "
+            "VALUES(?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+            request_id, user_id, package_id, idea_amount, detail_amount, note[:300], now, now,
+        )
+        return await self._first("SELECT * FROM quota_purchase_requests WHERE id = ? AND user_id = ?", request_id, user_id)
+
+    async def list_purchase_requests(self, user_id: str) -> List[Dict[str, Any]]:
+        return await self._all(
+            "SELECT id, package_id, idea_amount, detail_amount, status, note, created_at, updated_at "
+            "FROM quota_purchase_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+            user_id,
+        )
+
+    async def admin_purchase_requests(self, status: str = "pending") -> List[Dict[str, Any]]:
+        return await self._all(
+            "SELECT r.id, r.user_id, u.login, u.display_name, r.package_id, r.idea_amount, r.detail_amount, "
+            "r.status, r.note, r.created_at, r.updated_at FROM quota_purchase_requests r "
+            "JOIN users u ON u.id = r.user_id WHERE ? = '' OR r.status = ? ORDER BY r.created_at DESC LIMIT 100",
+            status, status,
+        )
+
+    async def update_purchase_request(self, request_id: str, status: str) -> Dict[str, Any]:
+        if status not in {"fulfilled", "cancelled"}:
+            raise ValueError("Invalid purchase request status")
+        result = await self._run(
+            "UPDATE quota_purchase_requests SET status = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
+            status, iso(utc_now()), request_id,
+        )
+        if not self._changed(result):
+            raise ValueError("Pending purchase request not found")
+        return await self._first("SELECT * FROM quota_purchase_requests WHERE id = ?", request_id)
+
     async def find_users(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         needle = query.strip()
         pattern = f"%{needle}%"

@@ -113,6 +113,8 @@ This runs frontend lint, Node tests, production build, backend pytest, Python co
 ## Authentication and administration
 
 - GitHub OAuth works independently. When Supabase is configured, any valid email can register and verify an account, while GitHub, Google, and Apple providers can be enabled individually.
+- Email registration accepts a 2–32 character display name. Signed-in users can inspect total, used, reserved, and remaining Idea and detailed-plan credits from the account page.
+- Until online payments are integrated, credit packages create a persistent purchase request for manual review; the product never presents that request as a completed payment.
 - The administration page is hidden from regular navigation. Visit `/admin` directly and authenticate with `IDEA_SPARK_ADMIN_TOKEN` to search users, adjust Idea or detailed-plan limits, repair confirmed stuck reservations, and review the audit history.
 - Production enables email, GitHub, and Google login. Apple login remains disabled because it requires a paid Apple Developer account, so no unavailable action is shown.
 

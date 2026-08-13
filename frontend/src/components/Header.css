@@ -8,4 +8,6 @@
 .header-nav button.active { border-color: var(--line); color: var(--ink); background: var(--surface); box-shadow: 0 4px 14px rgba(37,30,24,.05); }
 .account-control { display: flex; align-items: center; gap: 8px; margin-left: 12px; color: var(--muted); font-size: 12px; }
 .account-control a, .account-control button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: var(--surface); text-decoration: none; }
-@media (max-width: 620px) { .header { padding: 0 16px; } .brand-version, .header-nav button span, .account-control > span { display: none; } .header-nav button, .account-control a, .account-control button { padding: 9px; } }
+.account-control .quota-shortcut { gap: 8px; border-color: #d3ccf3; background: var(--violet-soft); color: var(--violet); font: 700 9px/1 var(--font-mono); }
+@media (max-width: 760px) { .header { padding: 0 16px; } .brand-version, .header-nav button span, .account-control > span { display: none; } .header-nav button, .account-control a, .account-control button { padding: 9px; } .account-control .quota-shortcut span:last-child { display: none; } }
+@media (max-width: 440px) { .brand > span:not(.brand-version), .account-control .quota-shortcut { display: none; } }

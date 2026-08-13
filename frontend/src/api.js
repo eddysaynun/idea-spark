@@ -91,6 +91,20 @@ export const adminAPI = {
   audit: async (token, userId) => (await apiClient.get(`/admin/users/${userId}/quota/audit`, {
     headers: { 'X-Admin-Token': token },
   })).data,
+  purchaseRequests: async (token, status = 'pending') => (await apiClient.get('/admin/purchase-requests', {
+    params: { status }, headers: { 'X-Admin-Token': token },
+  })).data,
+  updatePurchaseRequest: async (token, requestId, status) => (await apiClient.patch(
+    `/admin/purchase-requests/${requestId}`, { status }, { headers: { 'X-Admin-Token': token } },
+  )).data,
+};
+
+export const billingAPI = {
+  packages: async () => (await apiClient.get('/billing/packages')).data,
+  requests: async () => (await apiClient.get('/billing/requests')).data,
+  requestPackage: async (packageId, note = '') => (await apiClient.post('/billing/requests', {
+    package_id: packageId, note,
+  })).data,
 };
 
 // Ideas 生成

@@ -1,4 +1,4 @@
-import { Archive, LogIn, LogOut, Sparkles } from 'lucide-react';
+import { Archive, CircleUserRound, LogIn, LogOut, Sparkles } from 'lucide-react';
 
 import { useApp } from '../context/app-context';
 
@@ -9,6 +9,7 @@ const Header = ({ currentPage, onPageChange }) => {
   const items = [
     { id: 'generate', label: '工作台', icon: Sparkles },
     { id: 'history', label: '历史', icon: Archive },
+    ...(user ? [{ id: 'account', label: '账户', icon: CircleUserRound }] : []),
   ];
 
   return (
@@ -33,7 +34,13 @@ const Header = ({ currentPage, onPageChange }) => {
         ))}
       </nav>
       <div className="account-control">
-        {user ? <><span>{user.display_name}</span><button onClick={logout} aria-label="退出登录"><LogOut size={16} /></button></> : <button onClick={() => onPageChange('login')}><LogIn size={16} /> 登录</button>}
+        {user ? <>
+          <button className="quota-shortcut" onClick={() => onPageChange('account')} aria-label="查看剩余额度">
+            <span>{Math.max(0, user.quota.idea.limit - user.quota.idea.used - user.quota.idea.reserved)} Idea</span>
+            <span>{Math.max(0, user.quota.detail.limit - user.quota.detail.used - user.quota.detail.reserved)} 方案</span>
+          </button>
+          <span>{user.display_name}</span><button onClick={logout} aria-label="退出登录"><LogOut size={16} /></button>
+        </> : <button onClick={() => onPageChange('login')}><LogIn size={16} /> 登录</button>}
       </div>
     </header>
   );

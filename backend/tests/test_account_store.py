@@ -46,6 +46,7 @@ def store():
     connection.row_factory = sqlite3.Row
     connection.executescript(Path("migrations/0001_commercial_accounts.sql").read_text())
     connection.executescript(Path("migrations/0002_admin_quota_audit.sql").read_text())
+    connection.executescript(Path("migrations/0003_purchase_requests.sql").read_text())
     yield AccountStore(Database(connection))
     connection.close()
 
@@ -123,6 +124,30 @@ async def test_admin_can_clear_stuck_reservation_with_audit(store):
     event = (await store.quota_audit(user["id"]))[0]
     assert event["action"] == "clear_reserved"
     assert event["reserved_before"] == 1
+
+
+async def test_purchase_request_is_user_scoped_and_pending_idempotent(store):
+    alice = await create_user(store, "purchase-alice")
+    bob = await create_user(store, "purchase-bob")
+
+    first = await store.create_purchase_request(alice["id"], "starter", 20, 5)
+    duplicate = await store.create_purchase_request(alice["id"], "starter", 20, 5)
+    await store.create_purchase_request(bob["id"], "builder", 60, 20)
+
+    assert first["id"] == duplicate["id"]
+    assert [item["id"] for item in await store.list_purchase_requests(alice["id"])] == [first["id"]]
+    pending = await store.admin_purchase_requests("pending")
+    assert {item["user_id"] for item in pending} == {alice["id"], bob["id"]}
+
+
+async def test_only_pending_purchase_request_can_change_status(store):
+    user = await create_user(store, "purchase-status")
+    purchase = await store.create_purchase_request(user["id"], "starter", 20, 5)
+
+    fulfilled = await store.update_purchase_request(purchase["id"], "fulfilled")
+    assert fulfilled["status"] == "fulfilled"
+    with pytest.raises(ValueError, match="Pending purchase request not found"):
+        await store.update_purchase_request(purchase["id"], "cancelled")
 
 
 @pytest.mark.parametrize("return_to", ["//evil.example", "/\\evil.example", "https://evil.example"])
