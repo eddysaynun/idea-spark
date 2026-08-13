@@ -72,3 +72,11 @@ async def update_purchase_request(request_id: str, body: PurchaseStatus, request
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"success": True, "request": purchase}
+
+
+@router.get("/payment-orders")
+async def payment_orders(
+    request: Request,
+    status: str = Query("", pattern="^(pending|paid|expired|cancelled|refunded|failed|)$"),
+):
+    return {"success": True, "orders": await store(request).admin_payment_orders(status)}

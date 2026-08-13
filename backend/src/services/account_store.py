@@ -48,6 +48,12 @@ class AccountStore:
     async def _run(self, query: str, *params):
         return await self.db.prepare(query).bind(*params).run()
 
+    async def _batch(self, statements):
+        batch = getattr(self.db, "batch", None)
+        if batch is None:
+            raise RuntimeError("Atomic D1 batch support is required")
+        return await batch(statements)
+
     async def create_oauth_state(self, return_to: str = "/") -> str:
         state = secrets.token_urlsafe(32)
         now = utc_now()
@@ -169,6 +175,129 @@ class AccountStore:
         if not self._changed(result):
             raise ValueError("Pending purchase request not found")
         return await self._first("SELECT * FROM quota_purchase_requests WHERE id = ?", request_id)
+
+    async def create_payment_order(
+        self, user_id: str, package: Dict[str, Any], channel: str, expires_minutes: int = 15
+    ) -> Dict[str, Any]:
+        if channel not in {"wechat", "alipay"}:
+            raise ValueError("Invalid payment channel")
+        order_id = str(uuid.uuid4())
+        now = utc_now()
+        await self._run(
+            "INSERT INTO payment_orders(id, user_id, package_id, package_name, idea_amount, detail_amount, "
+            "amount_fen, currency, channel, status, expires_at, created_at, updated_at) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, 'CNY', ?, 'pending', ?, ?, ?)",
+            order_id, user_id, package["id"], package["name"], package["idea_amount"],
+            package["detail_amount"], package["amount_fen"], channel,
+            iso(now + timedelta(minutes=expires_minutes)), iso(now), iso(now),
+        )
+        return await self.get_payment_order(user_id, order_id)
+
+    async def attach_payment_checkout(
+        self, user_id: str, order_id: str, provider_order_id: str, pay_url: str
+    ) -> Dict[str, Any]:
+        result = await self._run(
+            "UPDATE payment_orders SET provider_order_id = ?, pay_url = ?, updated_at = ? "
+            "WHERE id = ? AND user_id = ? AND status = 'pending'",
+            provider_order_id[:200], pay_url[:2000], iso(utc_now()), order_id, user_id,
+        )
+        if not self._changed(result):
+            raise ValueError("Pending payment order not found")
+        return await self.get_payment_order(user_id, order_id)
+
+    async def fail_payment_order(self, user_id: str, order_id: str, reason: str) -> None:
+        await self._run(
+            "UPDATE payment_orders SET status = 'failed', failure_reason = ?, updated_at = ? "
+            "WHERE id = ? AND user_id = ? AND status = 'pending'",
+            reason[:300], iso(utc_now()), order_id, user_id,
+        )
+
+    async def get_payment_order(self, user_id: str, order_id: str) -> Dict[str, Any]:
+        order = await self._first(
+            "SELECT id, package_id, package_name, idea_amount, detail_amount, amount_fen, currency, "
+            "channel, status, pay_url, expires_at, paid_at, fulfilled_at, refunded_at, created_at, updated_at "
+            "FROM payment_orders WHERE id = ? AND user_id = ?",
+            order_id, user_id,
+        )
+        if not order:
+            raise ValueError("Payment order not found")
+        if order["status"] == "pending" and order["expires_at"] <= iso(utc_now()):
+            await self._run(
+                "UPDATE payment_orders SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'pending'",
+                iso(utc_now()), order_id,
+            )
+            order["status"] = "expired"
+        return order
+
+    async def list_payment_orders(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        return await self._all(
+            "SELECT id, package_id, package_name, idea_amount, detail_amount, amount_fen, currency, "
+            "channel, status, pay_url, expires_at, paid_at, fulfilled_at, refunded_at, created_at, updated_at "
+            "FROM payment_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            user_id, min(max(limit, 1), 100),
+        )
+
+    async def admin_payment_orders(self, status: str = "") -> List[Dict[str, Any]]:
+        return await self._all(
+            "SELECT o.id, o.user_id, u.login, u.display_name, o.package_id, o.package_name, o.idea_amount, "
+            "o.detail_amount, o.amount_fen, o.currency, o.channel, o.status, o.provider_order_id, "
+            "o.provider_trade_id, o.failure_reason, o.expires_at, o.paid_at, o.fulfilled_at, o.refunded_at, "
+            "o.created_at, o.updated_at FROM payment_orders o JOIN users u ON u.id = o.user_id "
+            "WHERE ? = '' OR o.status = ? ORDER BY o.created_at DESC LIMIT 100",
+            status, status,
+        )
+
+    async def fulfill_payment(
+        self, order_id: str, channel: str, event_key: str, event_type: str,
+        provider_trade_id: str, amount_fen: int, payload_digest: str, verified: bool,
+    ) -> Dict[str, Any]:
+        order = await self._first("SELECT * FROM payment_orders WHERE id = ?", order_id)
+        if not order:
+            raise ValueError("Payment order not found")
+        if not verified:
+            await self._run(
+                "INSERT OR IGNORE INTO payment_events(id, event_key, order_id, channel, event_type, provider_trade_id, "
+                "amount_fen, verified, payload_digest, processing_status, rejection_reason, created_at) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, 0, ?, 'rejected', 'signature verification failed', ?)",
+                str(uuid.uuid4()), event_key, order_id, channel, event_type, provider_trade_id,
+                amount_fen, payload_digest, iso(utc_now()),
+            )
+            raise ValueError("Payment signature verification failed")
+        if channel != order["channel"] or amount_fen != int(order["amount_fen"]):
+            raise ValueError("Payment channel or amount mismatch")
+        if order["status"] == "paid" and order.get("fulfilled_at"):
+            return {"status": "duplicate", "order": order}
+        if order["status"] != "pending" or order["expires_at"] <= iso(utc_now()):
+            raise ValueError("Payment order is not payable")
+
+        now = iso(utc_now())
+        statements = [
+            self.db.prepare(
+                "INSERT INTO payment_events(id, event_key, order_id, channel, event_type, provider_trade_id, "
+                "amount_fen, verified, payload_digest, processing_status, created_at) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, 1, ?, 'processed', ?)"
+            ).bind(str(uuid.uuid4()), event_key, order_id, channel, event_type, provider_trade_id, amount_fen, payload_digest, now),
+            self.db.prepare(
+                "UPDATE payment_orders SET status = 'paid', provider_trade_id = ?, paid_at = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'pending' AND fulfilled_at IS NULL"
+            ).bind(provider_trade_id[:200], now, now, order_id),
+            self.db.prepare(
+                "UPDATE users SET idea_limit = idea_limit + ?, detail_limit = detail_limit + ?, updated_at = ? "
+                "WHERE id = ? AND EXISTS(SELECT 1 FROM payment_orders WHERE id = ? AND status = 'paid' AND fulfilled_at IS NULL)"
+            ).bind(order["idea_amount"], order["detail_amount"], now, order["user_id"], order_id),
+            self.db.prepare(
+                "UPDATE payment_orders SET fulfilled_at = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'paid' AND fulfilled_at IS NULL"
+            ).bind(now, now, order_id),
+        ]
+        try:
+            await self._batch(statements)
+        except Exception as exc:
+            duplicate = await self._first("SELECT id FROM payment_events WHERE event_key = ?", event_key)
+            if duplicate:
+                return {"status": "duplicate", "order": await self._first("SELECT * FROM payment_orders WHERE id = ?", order_id)}
+            raise exc
+        return {"status": "fulfilled", "order": await self._first("SELECT * FROM payment_orders WHERE id = ?", order_id)}
 
     async def find_users(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
         needle = query.strip()

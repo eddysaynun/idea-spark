@@ -117,6 +117,9 @@ async def initialize_application(app: FastAPI, env=None) -> None:
         "google": binding("AUTH_GOOGLE_ENABLED", "false").lower() == "true",
         "apple": binding("AUTH_APPLE_ENABLED", "false").lower() == "true",
     }
+    from services.payments import PaymentRegistry
+    # Real providers are registered only after merchant onboarding and signature adapters are configured.
+    app.state.payment_registry = PaymentRegistry()
     model_proxy = getattr(env, "MODEL_PROXY", None) if env is not None else None
     app.state.model_client = ModelClient(config, service_binding=model_proxy)
 

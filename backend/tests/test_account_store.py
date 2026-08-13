@@ -39,6 +39,19 @@ class Database:
     def prepare(self, query):
         return Statement(self, query)
 
+    async def batch(self, statements):
+        try:
+            self.connection.execute("BEGIN")
+            results = []
+            for statement in statements:
+                cursor = self.connection.execute(statement.query, statement.params)
+                results.append(Result(changes=cursor.rowcount if cursor.rowcount > 0 else 0))
+            self.connection.commit()
+            return results
+        except Exception:
+            self.connection.rollback()
+            raise
+
 
 @pytest.fixture
 def store():
@@ -47,6 +60,7 @@ def store():
     connection.executescript(Path("migrations/0001_commercial_accounts.sql").read_text())
     connection.executescript(Path("migrations/0002_admin_quota_audit.sql").read_text())
     connection.executescript(Path("migrations/0003_purchase_requests.sql").read_text())
+    connection.executescript(Path("migrations/0004_payment_orders.sql").read_text())
     yield AccountStore(Database(connection))
     connection.close()
 
@@ -148,6 +162,47 @@ async def test_only_pending_purchase_request_can_change_status(store):
     assert fulfilled["status"] == "fulfilled"
     with pytest.raises(ValueError, match="Pending purchase request not found"):
         await store.update_purchase_request(purchase["id"], "cancelled")
+
+
+async def test_payment_order_is_owned_and_snapshots_server_package(store):
+    alice = await create_user(store, "payment-alice")
+    bob = await create_user(store, "payment-bob")
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+
+    order = await store.create_payment_order(alice["id"], package, "wechat")
+    assert order["amount_fen"] == 2900
+    assert order["idea_amount"] == 20
+    with pytest.raises(ValueError, match="Payment order not found"):
+        await store.get_payment_order(bob["id"], order["id"])
+
+
+async def test_verified_payment_fulfills_quota_once(store):
+    user = await create_user(store, "payment-paid")
+    package = {"id": "builder", "name": "Builder", "idea_amount": 60, "detail_amount": 20, "amount_fen": 7900}
+    order = await store.create_payment_order(user["id"], package, "alipay")
+    await store.attach_payment_checkout(user["id"], order["id"], "provider-order-1", "https://pay.example.test/1")
+
+    first = await store.fulfill_payment(
+        order["id"], "alipay", "event-1", "TRADE_SUCCESS", "trade-1", 7900, "digest", True
+    )
+    duplicate = await store.fulfill_payment(
+        order["id"], "alipay", "event-1", "TRADE_SUCCESS", "trade-1", 7900, "digest", True
+    )
+    refreshed = await store._first("SELECT idea_limit, detail_limit FROM users WHERE id = ?", user["id"])
+    assert first["status"] == "fulfilled"
+    assert duplicate["status"] == "duplicate"
+    assert refreshed == {"idea_limit": 65, "detail_limit": 22}
+
+
+@pytest.mark.parametrize("channel,amount", [("wechat", 7900), ("alipay", 7800)])
+async def test_payment_rejects_wrong_channel_or_amount(store, channel, amount):
+    user = await create_user(store, f"mismatch-{channel}-{amount}")
+    package = {"id": "builder", "name": "Builder", "idea_amount": 60, "detail_amount": 20, "amount_fen": 7900}
+    order = await store.create_payment_order(user["id"], package, "alipay")
+    with pytest.raises(ValueError, match="channel or amount mismatch"):
+        await store.fulfill_payment(order["id"], channel, f"event-{channel}-{amount}", "paid", "trade", amount, "digest", True)
+    refreshed = await store._first("SELECT idea_limit FROM users WHERE id = ?", user["id"])
+    assert refreshed["idea_limit"] == 5
 
 
 @pytest.mark.parametrize("return_to", ["//evil.example", "/\\evil.example", "https://evil.example"])

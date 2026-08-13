@@ -57,6 +57,7 @@ export default function AdminPage() {
   const [selected, setSelected] = useState(null);
   const [events, setEvents] = useState([]);
   const [purchaseRequests, setPurchaseRequests] = useState([]);
+  const [paymentOrders, setPaymentOrders] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -69,6 +70,7 @@ export default function AdminPage() {
       const data = await adminAPI.users(token, query.trim());
       setUsers(data.users);
       setPurchaseRequests((await adminAPI.purchaseRequests(token)).requests);
+      setPaymentOrders((await adminAPI.paymentOrders(token)).orders);
       if (selected) setSelected(data.users.find((user) => user.id === selected.id) || null);
     } catch (reason) { setError(errorText(reason)); setUsers([]); }
     finally { setBusy(false); }
@@ -114,6 +116,7 @@ export default function AdminPage() {
     {message && <p className="admin-message" role="status">{message}</p>}
     {error && <p className="admin-error" role="alert">{error}</p>}
     {purchaseRequests.length > 0 && <section className="purchase-admin"><div className="purchase-admin-head"><span>待处理购买申请</span><strong>{purchaseRequests.length}</strong></div>{purchaseRequests.map((item) => <article key={item.id}><div><strong>{item.display_name}</strong><span>{item.login}</span></div><p>{item.idea_amount} Idea + {item.detail_amount} 方案</p><small>{new Date(item.created_at).toLocaleString('zh-CN')}</small><div><button onClick={() => openPurchase(item)}>载入用户</button><button className="done" onClick={() => closePurchase(item, 'fulfilled')}><CheckCircle2 size={14} /> 已加额</button><button className="cancel" onClick={() => closePurchase(item, 'cancelled')}>取消</button></div></article>)}</section>}
+    {paymentOrders.length > 0 && <section className="payment-admin"><div className="purchase-admin-head"><span>支付订单审计</span><strong>{paymentOrders.length}</strong></div>{paymentOrders.map((item) => <article key={item.id}><div><strong>{item.display_name}</strong><span>{item.login}</span></div><p>{item.package_name} · ¥{(item.amount_fen / 100).toFixed(2)}</p><small>{item.channel === 'wechat' ? '微信支付' : '支付宝'} · {item.status}</small><code>{item.id}</code></article>)}</section>}
     <div className="admin-workspace">
       <aside className="user-results">
         <div className="user-results-head"><span>用户</span><strong>{users.length}</strong></div>

@@ -14,14 +14,20 @@ export default function AccountPage() {
   const { user, refreshUser } = useApp();
   const [packages, setPackages] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [channels, setChannels] = useState({});
+  const [paymentMode, setPaymentMode] = useState('manual_review');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([billingAPI.packages(), billingAPI.requests()]).then(([packageData, requestData]) => {
+    Promise.all([billingAPI.packages(), billingAPI.requests(), billingAPI.orders()]).then(([packageData, requestData, orderData]) => {
       setPackages(packageData.packages);
       setRequests(requestData.requests);
+      setOrders(orderData.orders);
+      setChannels(packageData.channels || {});
+      setPaymentMode(packageData.payment_mode);
     }).catch((reason) => setError(reason?.response?.data?.detail || '账户信息加载失败'));
     refreshUser();
   }, [refreshUser]);
@@ -41,6 +47,16 @@ export default function AccountPage() {
     finally { setBusy(''); }
   };
 
+  const startPayment = async (packageId, channel) => {
+    setBusy(`${packageId}-${channel}`); setMessage(''); setError('');
+    try {
+      const data = await billingAPI.createOrder(packageId, channel);
+      setOrders((current) => [data.order, ...current]);
+      window.location.assign(data.order.pay_url);
+    } catch (reason) { setError(reason?.response?.data?.detail || '支付订单创建失败'); }
+    finally { setBusy(''); }
+  };
+
   return <section className="account-page">
     <header className="account-title"><span>ACCOUNT & CREDITS</span><h1>{user.display_name} 的账户</h1><p>{user.login}</p></header>
     <div className="credit-overview">
@@ -53,14 +69,18 @@ export default function AccountPage() {
       <QuotaCard icon={ScrollText} title="详细方案" quota={detail} />
     </div>
     <section className="package-section">
-      <div className="package-heading"><div><span>TOP UP</span><h2>增加创作额度</h2></div><p>在线支付尚未开放。提交后由管理员联系确认付款方式，不会自动扣款。</p></div>
+      <div className="package-heading"><div><span>TOP UP</span><h2>增加创作额度</h2></div><p>{paymentMode === 'online' ? '选择支付宝或微信支付，到账后额度会由服务端自动发放。' : '支付商户正在认证中。当前可提交人工购买申请，不会自动扣款。'}</p></div>
       <div className="package-grid">{packages.map((item) => <article key={item.id}>
-        <span>{item.name}</span><strong>+{item.idea_amount} Idea</strong><p>包含 {item.detail_amount} 份详细方案</p>
-        <button onClick={() => requestPackage(item.id)} disabled={busy === item.id || pending.has(item.id)}>{pending.has(item.id) ? <><Clock3 size={16} /> 等待处理</> : <>申请购买 <ArrowUpRight size={16} /></>}</button>
+        <span>{item.name}</span><strong>+{item.idea_amount} Idea</strong><p>包含 {item.detail_amount} 份详细方案</p><b>¥{(item.amount_fen / 100).toFixed(0)}</b>
+        <div className="pay-actions">
+          {Object.entries(channels).map(([channel, state]) => <button key={channel} onClick={() => startPayment(item.id, channel)} disabled={!state.configured || busy === `${item.id}-${channel}`} title={state.configured ? `使用${state.name}` : `${state.name}商户认证中`}>{state.name}</button>)}
+          {paymentMode !== 'online' && <button className="manual" onClick={() => requestPackage(item.id)} disabled={busy === item.id || pending.has(item.id)}>{pending.has(item.id) ? <><Clock3 size={16} /> 等待处理</> : <>人工申请 <ArrowUpRight size={16} /></>}</button>}
+        </div>
       </article>)}</div>
       {message && <p className="account-message"><CheckCircle2 size={16} />{message}</p>}
       {error && <p className="account-error" role="alert">{error}</p>}
     </section>
+    {orders.length > 0 && <section className="request-history"><h2>支付订单</h2>{orders.map((item) => <div key={item.id}><span>{new Date(item.created_at).toLocaleString('zh-CN')}</span><strong>{item.package_name} · ¥{(item.amount_fen / 100).toFixed(2)} · {item.channel === 'wechat' ? '微信支付' : '支付宝'}</strong><em className={item.status}>{item.status === 'paid' ? '已到账' : item.status === 'pending' ? '待支付' : item.status === 'expired' ? '已过期' : item.status}</em></div>)}</section>}
     {requests.length > 0 && <section className="request-history"><h2>购买申请</h2>{requests.map((item) => <div key={item.id}><span>{new Date(item.created_at).toLocaleString('zh-CN')}</span><strong>{item.package_id} · {item.idea_amount} Idea / {item.detail_amount} 方案</strong><em className={item.status}>{item.status === 'pending' ? '待处理' : item.status === 'fulfilled' ? '已完成' : '已取消'}</em></div>)}</section>}
   </section>;
 }

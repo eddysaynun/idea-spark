@@ -97,6 +97,9 @@ export const adminAPI = {
   updatePurchaseRequest: async (token, requestId, status) => (await apiClient.patch(
     `/admin/purchase-requests/${requestId}`, { status }, { headers: { 'X-Admin-Token': token } },
   )).data,
+  paymentOrders: async (token, status = '') => (await apiClient.get('/admin/payment-orders', {
+    params: { status }, headers: { 'X-Admin-Token': token },
+  })).data,
 };
 
 export const billingAPI = {
@@ -104,6 +107,11 @@ export const billingAPI = {
   requests: async () => (await apiClient.get('/billing/requests')).data,
   requestPackage: async (packageId, note = '') => (await apiClient.post('/billing/requests', {
     package_id: packageId, note,
+  })).data,
+  orders: async () => (await apiClient.get('/billing/orders')).data,
+  order: async (orderId) => (await apiClient.get(`/billing/orders/${orderId}`)).data,
+  createOrder: async (packageId, channel) => (await apiClient.post('/billing/orders', {
+    package_id: packageId, channel,
   })).data,
 };
 
