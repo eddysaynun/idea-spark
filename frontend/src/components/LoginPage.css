@@ -24,8 +24,8 @@
 .login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .login-providers { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 9px; }
 .login-providers button, .login-providers a { border: 1px solid var(--line); background: white; color: var(--ink); font-size: 13px; }
-.google-g { font-weight: 800; color: #4285f4; }
-.github-mark { font: 800 11px/1 var(--font-mono); }
+.provider-icon { width: 18px; height: 18px; flex: 0 0 18px; }
+.github-icon { color: #181717; }
 .login-setup, .login-terms, .login-notice, .login-error { font-size: 12px; line-height: 1.55; margin: 18px 0 0; }
 .login-setup, .login-terms { color: var(--muted); }
 .login-notice { color: var(--mint); }

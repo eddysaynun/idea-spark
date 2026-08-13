@@ -2,10 +2,30 @@ import { useEffect, useState } from 'react';
 import { Apple, ArrowLeft, LoaderCircle, Mail } from 'lucide-react';
 
 import { authAPI } from '../api';
-import { useApp } from '../context/app-context';
 import './LoginPage.css';
 
 const messageFrom = (error) => error?.message || error?.response?.data?.detail || '登录没有完成，请重试';
+const AUTH_STORAGE_KEY = 'idea-spark-managed-auth';
+
+const withTimeout = (promise, milliseconds, message) => Promise.race([
+  promise,
+  new Promise((_, reject) => window.setTimeout(() => reject(new Error(message)), milliseconds)),
+]);
+
+const GitHubIcon = () => (
+  <svg className="provider-icon github-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="currentColor" d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.24c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.28-1.7-1.28-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.57-.29-5.27-1.28-5.27-5.68 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.16 1.18A10.95 10.95 0 0 1 12 6.1c.98 0 1.95.13 2.87.39 2.2-1.49 3.16-1.18 3.16-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.71 5.38-5.29 5.67.42.36.79 1.07.79 2.16v3.27c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" />
+  </svg>
+);
+
+const GoogleIcon = () => (
+  <svg className="provider-icon google-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.07H12v3.91h5.38a4.6 4.6 0 0 1-1.99 3.02v2.54h3.23c1.89-1.74 2.98-4.31 2.98-7.4Z" />
+    <path fill="#34A853" d="M12 22c2.7 0 4.96-.89 6.62-2.41l-3.23-2.54c-.9.6-2.04.96-3.39.96-2.6 0-4.81-1.76-5.6-4.12H3.06v2.62A10 10 0 0 0 12 22Z" />
+    <path fill="#FBBC05" d="M6.4 13.89A6 6 0 0 1 6.08 12c0-.66.11-1.3.32-1.89V7.49H3.06A10 10 0 0 0 2 12c0 1.62.39 3.15 1.06 4.51l3.34-2.62Z" />
+    <path fill="#EA4335" d="M12 5.99c1.47 0 2.79.5 3.82 1.49l2.87-2.87A9.63 9.63 0 0 0 12 2a10 10 0 0 0-8.94 5.49l3.34 2.62C7.19 7.75 9.4 5.99 12 5.99Z" />
+  </svg>
+);
 
 let managedAuthClientPromise;
 let callbackCompletionPromise;
@@ -15,33 +35,52 @@ const managedAuthClient = (settings) => {
     managedAuthClientPromise = import('@supabase/supabase-js').then(({ createClient }) => createClient(
       settings.url,
       settings.anon_key,
-      { auth: { flowType: 'pkce', persistSession: true, detectSessionInUrl: false } },
+      {
+        auth: {
+          flowType: 'pkce',
+          persistSession: true,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+          storageKey: AUTH_STORAGE_KEY,
+        },
+      },
     ));
   }
   return managedAuthClientPromise;
 };
 
-const completeManagedCallback = (supabase) => {
+const completeManagedCallback = (supabase, onStage) => {
   if (!callbackCompletionPromise) {
     callbackCompletionPromise = (async () => {
       const params = new URLSearchParams(window.location.search);
       const callbackError = params.get('error_description') || params.get('error');
       if (callbackError) throw new Error(callbackError);
       const code = params.get('code');
+      const flowId = params.get('sb_flow_id');
+      window.history.replaceState({}, '', '/auth/callback');
+      onStage('正在验证 GitHub / Google 登录…');
       const result = code
-        ? await supabase.auth.exchangeCodeForSession(code)
-        : await supabase.auth.getSession();
+        ? await withTimeout(
+          supabase.auth.exchangeCodeForSession(code, flowId ? { flowId } : undefined),
+          20000,
+          '登录服务响应超时，请返回登录页重试',
+        )
+        : await withTimeout(supabase.auth.getSession(), 5000, '没有找到可用的登录会话，请重新登录');
       if (result.error) throw result.error;
       if (!result.data.session) throw new Error('登录链接无效或已过期，请重新登录');
-      await authAPI.exchange(result.data.session.access_token);
-      await supabase.auth.signOut({ scope: 'local' });
+      onStage('正在创建安全工作区会话…');
+      await withTimeout(
+        authAPI.exchange(result.data.session.access_token),
+        20000,
+        '工作区登录响应超时，请重试',
+      );
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
     })();
   }
   return callbackCompletionPromise;
 };
 
 export default function LoginPage({ onComplete }) {
-  const { refreshUser } = useApp();
   const [config, setConfig] = useState(null);
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
@@ -70,12 +109,12 @@ export default function LoginPage({ onComplete }) {
     if (!supabase || window.location.pathname !== '/auth/callback') return;
     let active = true;
     setBusy(true);
-    completeManagedCallback(supabase).then(async () => {
-      await refreshUser();
-      if (active) onComplete();
+    setError('');
+    completeManagedCallback(supabase, (stage) => active && setNotice(stage)).then(() => {
+      if (active) window.location.replace('/');
     }).catch((reason) => active && setError(messageFrom(reason))).finally(() => active && setBusy(false));
     return () => { active = false; };
-  }, [onComplete, refreshUser, supabase]);
+  }, [supabase]);
 
   const submitEmail = async (event) => {
     event.preventDefault();
@@ -101,9 +140,8 @@ export default function LoginPage({ onComplete }) {
         if (loginError) throw loginError;
         await authAPI.exchange(data.session.access_token);
       }
-      await supabase.auth.signOut({ scope: 'local' });
-      await refreshUser();
-      onComplete();
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      window.location.replace('/');
     } catch (reason) {
       setError(messageFrom(reason));
     } finally {
@@ -114,11 +152,16 @@ export default function LoginPage({ onComplete }) {
   const oauth = async (provider) => {
     if (!supabase) return;
     setBusy(true); setError('');
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-    if (oauthError) { setError(messageFrom(oauthError)); setBusy(false); }
+    try {
+      const { error: oauthError } = await withTimeout(supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo: `${window.location.origin}/auth/callback` },
+      }), 15000, '登录服务响应超时，请重试');
+      if (oauthError) throw oauthError;
+    } catch (reason) {
+      setError(messageFrom(reason));
+      setBusy(false);
+    }
   };
 
   const enabled = config?.supabase?.providers || {};
@@ -146,9 +189,9 @@ export default function LoginPage({ onComplete }) {
           </form>}
           {(config?.github || enabled.google || enabled.apple) && <div className="login-divider"><span>或者</span></div>}
           <div className="login-providers">
-            {enabled.github && <button onClick={() => oauth('github')} disabled={busy}><span className="github-mark">GH</span> GitHub</button>}
-            {config?.github && <a href={authAPI.loginUrl('/')}><span className="github-mark">GH</span> GitHub</a>}
-            {enabled.google && <button onClick={() => oauth('google')} disabled={busy}><span className="google-g">G</span> Google</button>}
+            {enabled.github && <button onClick={() => oauth('github')} disabled={busy}><GitHubIcon /> GitHub</button>}
+            {config?.github && <a href={authAPI.loginUrl('/')}><GitHubIcon /> GitHub</a>}
+            {enabled.google && <button onClick={() => oauth('google')} disabled={busy}><GoogleIcon /> Google</button>}
             {enabled.apple && <button onClick={() => oauth('apple')} disabled={busy}><Apple size={18} /> Apple</button>}
           </div>
           {!config?.supabase?.configured && <p className="login-setup">邮箱、Google 和 Apple 登录正在配置中；GitHub 登录已经可用。</p>}
