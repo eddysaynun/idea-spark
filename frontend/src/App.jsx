@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import Header from './components/Header';
 import DetailPage from './components/DetailPage';
@@ -8,20 +8,23 @@ import LoginPage from './components/LoginPage';
 import AdminPage from './components/AdminPage';
 import AccountPage from './components/AccountPage';
 import { useApp } from './context/app-context';
+import { pageFromPath, pathForPage } from './utils/routes';
 import './App.css';
 
 function App() {
   const { loadModels, loadSessions, loadSession, selectIdea } = useApp();
-  const [currentPage, setCurrentPage] = useState('generate');
+  const [currentPage, setCurrentPage] = useState(() => pageFromPath(window.location.pathname));
 
   useEffect(() => {
-    if (window.location.pathname === '/admin') {
-      setCurrentPage('admin');
-    } else if (window.location.pathname === '/account') {
-      setCurrentPage('account');
-    } else if (window.location.pathname === '/login' || window.location.pathname === '/auth/callback') {
-      setCurrentPage('login');
-    }
+    const handlePopState = () => setCurrentPage(pageFromPath(window.location.pathname));
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigate = useCallback((page, { replace = false } = {}) => {
+    const path = pathForPage(page);
+    window.history[replace ? 'replaceState' : 'pushState']({}, '', path);
+    setCurrentPage(page);
   }, []);
 
   useEffect(() => {
@@ -30,22 +33,22 @@ function App() {
   }, [loadModels, loadSessions]);
 
   const openIdea = (index) => {
-    if (selectIdea(index)) setCurrentPage('detail');
+    if (selectIdea(index)) navigate('detail');
   };
 
   const openSession = async (sessionId) => {
-    if (await loadSession(sessionId)) setCurrentPage('generate');
+    if (await loadSession(sessionId)) navigate('generate');
   };
 
   return (
     <div className="app-shell">
-      <Header currentPage={currentPage} onPageChange={setCurrentPage} />
+      <Header currentPage={currentPage} onPageChange={navigate} />
       <main className="main-content">
-        {currentPage === 'login' && <LoginPage onComplete={() => setCurrentPage('generate')} />}
+        {currentPage === 'login' && <LoginPage onComplete={() => navigate('generate', { replace: true })} />}
         {currentPage === 'admin' && <AdminPage />}
         {currentPage === 'account' && <AccountPage />}
         {currentPage === 'generate' && <GeneratePage onOpenIdea={openIdea} />}
-        {currentPage === 'detail' && <DetailPage onBack={() => setCurrentPage('generate')} />}
+        {currentPage === 'detail' && <DetailPage onBack={() => navigate('generate')} />}
         {currentPage === 'history' && <HistoryPage onOpenSession={openSession} />}
       </main>
     </div>

@@ -7,6 +7,39 @@ import './LoginPage.css';
 
 const messageFrom = (error) => error?.message || error?.response?.data?.detail || '登录没有完成，请重试';
 
+let managedAuthClientPromise;
+let callbackCompletionPromise;
+
+const managedAuthClient = (settings) => {
+  if (!managedAuthClientPromise) {
+    managedAuthClientPromise = import('@supabase/supabase-js').then(({ createClient }) => createClient(
+      settings.url,
+      settings.anon_key,
+      { auth: { flowType: 'pkce', persistSession: true, detectSessionInUrl: false } },
+    ));
+  }
+  return managedAuthClientPromise;
+};
+
+const completeManagedCallback = (supabase) => {
+  if (!callbackCompletionPromise) {
+    callbackCompletionPromise = (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const callbackError = params.get('error_description') || params.get('error');
+      if (callbackError) throw new Error(callbackError);
+      const code = params.get('code');
+      const result = code
+        ? await supabase.auth.exchangeCodeForSession(code)
+        : await supabase.auth.getSession();
+      if (result.error) throw result.error;
+      if (!result.data.session) throw new Error('登录链接无效或已过期，请重新登录');
+      await authAPI.exchange(result.data.session.access_token);
+      await supabase.auth.signOut({ scope: 'local' });
+    })();
+  }
+  return callbackCompletionPromise;
+};
+
 export default function LoginPage({ onComplete }) {
   const { refreshUser } = useApp();
   const [config, setConfig] = useState(null);
@@ -27,10 +60,8 @@ export default function LoginPage({ onComplete }) {
     const settings = config?.supabase;
     if (!settings?.configured) return;
     let active = true;
-    import('@supabase/supabase-js').then(({ createClient }) => {
-      if (active) setSupabase(createClient(settings.url, settings.anon_key, {
-        auth: { flowType: 'pkce', persistSession: true, detectSessionInUrl: true },
-      }));
+    managedAuthClient(settings).then((client) => {
+      if (active) setSupabase(client);
     }).catch((reason) => active && setError(messageFrom(reason)));
     return () => { active = false; };
   }, [config]);
@@ -39,16 +70,9 @@ export default function LoginPage({ onComplete }) {
     if (!supabase || window.location.pathname !== '/auth/callback') return;
     let active = true;
     setBusy(true);
-    supabase.auth.getSession().then(async ({ data, error: sessionError }) => {
-      if (sessionError) throw sessionError;
-      if (!data.session) throw new Error('登录链接无效或已过期，请重新登录');
-      await authAPI.exchange(data.session.access_token);
-      await supabase.auth.signOut({ scope: 'local' });
+    completeManagedCallback(supabase).then(async () => {
       await refreshUser();
-      if (active) {
-        window.history.replaceState({}, '', '/');
-        onComplete();
-      }
+      if (active) onComplete();
     }).catch((reason) => active && setError(messageFrom(reason))).finally(() => active && setBusy(false));
     return () => { active = false; };
   }, [onComplete, refreshUser, supabase]);
