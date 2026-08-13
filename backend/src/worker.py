@@ -2,11 +2,13 @@
 
 import os
 
-from workers import WorkerEntrypoint
+from workers import WorkerEntrypoint, fetch
 
 os.environ["IDEA_SPARK_RUNTIME"] = "cloudflare"
 
 from app import app, initialize_application
+
+app.state.runtime_fetch = fetch
 
 
 class Default(WorkerEntrypoint):
