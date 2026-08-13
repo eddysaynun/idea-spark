@@ -136,7 +136,7 @@ backend/
 - GitHub OAuth 可独立使用；配置 Supabase 后支持任意有效邮箱注册、邮箱验证、密码登录，以及动态启用 GitHub、Google、Apple 身份。
 - 普通用户看不到管理入口。管理员直接访问 `/admin`，输入 `IDEA_SPARK_ADMIN_TOKEN` 后，可按邮箱、用户名或用户 ID 查询账户。
 - 管理台可增加或扣减 Idea/详细方案额度、清理已确认异常的预占额度，并记录操作原因和前后值；管理员令牌只存在于当前页面内存中。
-- Apple 登录需要 Apple Developer 的 Service ID 与私钥；未完成 Provider 配置时入口不会展示。
+- 生产启用邮箱、GitHub 和 Google 登录；Apple 登录因需要付费 Apple Developer 账号暂不启用，入口不会展示。
 
 ## 商业权限与数据边界
 
