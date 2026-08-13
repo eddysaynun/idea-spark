@@ -73,8 +73,16 @@ class AccountStore:
         return row["return_to"] if row else None
 
     async def upsert_github_user(self, subject: str, login: str, display_name: str, avatar_url: str) -> Dict[str, Any]:
+        return await self.upsert_identity_user("github", subject, login, display_name, avatar_url)
+
+    async def upsert_identity_user(
+        self, provider: str, subject: str, login: str, display_name: str, avatar_url: str
+    ) -> Dict[str, Any]:
+        """Map one verified identity-provider user to one commercial account."""
+        if not provider or not subject:
+            raise ValueError("Identity provider and subject are required")
         existing = await self._first(
-            "SELECT * FROM users WHERE provider = 'github' AND provider_subject = ?", subject
+            "SELECT * FROM users WHERE provider = ? AND provider_subject = ?", provider, subject
         )
         now = iso(utc_now())
         if existing:
@@ -86,10 +94,10 @@ class AccountStore:
             return existing
         user_id = str(uuid.uuid4())
         await self._run(
-            "INSERT INTO users(id, provider, provider_subject, login, display_name, avatar_url, idea_limit, detail_limit, created_at, updated_at) VALUES(?, 'github', ?, ?, ?, ?, ?, ?, ?, ?)",
-            user_id, subject, login, display_name, avatar_url, self.idea_limit, self.detail_limit, now, now,
+            "INSERT INTO users(id, provider, provider_subject, login, display_name, avatar_url, idea_limit, detail_limit, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            user_id, provider, subject, login, display_name, avatar_url, self.idea_limit, self.detail_limit, now, now,
         )
-        return {"id": user_id, "provider": "github", "login": login, "display_name": display_name, "avatar_url": avatar_url}
+        return {"id": user_id, "provider": provider, "login": login, "display_name": display_name, "avatar_url": avatar_url}
 
     async def create_session(self, user_id: str, days: int = 30) -> str:
         token = secrets.token_urlsafe(48)
@@ -117,6 +125,67 @@ class AccountStore:
     async def delete_session(self, token: str) -> None:
         if token:
             await self._run("DELETE FROM user_sessions WHERE token_hash = ?", token_hash(token))
+
+    async def find_users(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        needle = query.strip()
+        pattern = f"%{needle}%"
+        return await self._all(
+            "SELECT id, provider, login, display_name, idea_limit, idea_used, idea_reserved, "
+            "detail_limit, detail_used, detail_reserved, created_at, updated_at "
+            "FROM users WHERE ? = '' OR id = ? OR login LIKE ? OR display_name LIKE ? "
+            "ORDER BY updated_at DESC LIMIT ?",
+            needle, needle, pattern, pattern, min(max(limit, 1), 100),
+        )
+
+    async def adjust_quota(self, user_id: str, resource: str, delta: int, reason: str) -> Dict[str, Any]:
+        if resource not in {"idea", "detail"} or delta == 0 or abs(delta) > 1_000_000:
+            raise ValueError("Invalid quota adjustment")
+        user = await self._first("SELECT * FROM users WHERE id = ?", user_id)
+        if not user:
+            raise ValueError("User not found")
+        before = int(user[f"{resource}_limit"])
+        after = before + delta
+        minimum = int(user[f"{resource}_used"]) + int(user[f"{resource}_reserved"])
+        if after < minimum:
+            raise ValueError("Quota limit cannot be lower than used plus reserved")
+        now = iso(utc_now())
+        await self._run(
+            f"UPDATE users SET {resource}_limit = ?, updated_at = ? WHERE id = ?",
+            after, now, user_id,
+        )
+        await self._run(
+            "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, reserved_before, reserved_after, reason, created_at) "
+            "VALUES(?, ?, ?, 'adjust_limit', ?, ?, ?, ?, ?, ?, ?)",
+            str(uuid.uuid4()), user_id, resource, delta, before, after,
+            user[f"{resource}_reserved"], user[f"{resource}_reserved"], reason, now,
+        )
+        return (await self.find_users(user_id, 1))[0]
+
+    async def clear_reserved_quota(self, user_id: str, resource: str, reason: str) -> Dict[str, Any]:
+        if resource not in {"idea", "detail"}:
+            raise ValueError("Invalid quota resource")
+        user = await self._first("SELECT * FROM users WHERE id = ?", user_id)
+        if not user:
+            raise ValueError("User not found")
+        before = int(user[f"{resource}_reserved"])
+        now = iso(utc_now())
+        await self._run(
+            f"UPDATE users SET {resource}_reserved = 0, updated_at = ? WHERE id = ?", now, user_id
+        )
+        await self._run(
+            "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, reserved_before, reserved_after, reason, created_at) "
+            "VALUES(?, ?, ?, 'clear_reserved', 0, ?, ?, ?, 0, ?, ?)",
+            str(uuid.uuid4()), user_id, resource, user[f"{resource}_limit"],
+            user[f"{resource}_limit"], before, reason, now,
+        )
+        return (await self.find_users(user_id, 1))[0]
+
+    async def quota_audit(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        return await self._all(
+            "SELECT resource, action, delta, limit_before, limit_after, reserved_before, reserved_after, reason, created_at "
+            "FROM admin_quota_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            user_id, min(max(limit, 1), 100),
+        )
 
     async def create_project(self, user_id: str, direction: str, count: int, category: str, model: str) -> Dict[str, Any]:
         project_id = str(uuid.uuid4())

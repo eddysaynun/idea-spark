@@ -14,6 +14,7 @@ from routers.config_router import router as config_router
 from routers.ideas_router import router as ideas_router
 from routers.stream_router import router as stream_router
 from routers.auth_router import router as auth_router
+from routers.admin_router import router as admin_router
 
 from utils.logger import setup_logging
 logger = logging.getLogger(__name__)
@@ -99,6 +100,22 @@ async def initialize_application(app: FastAPI, env=None) -> None:
         str(getattr(env, "GITHUB_CLIENT_SECRET", ""))
         if env is not None else os.environ.get("GITHUB_CLIENT_SECRET", "")
     )
+    app.state.supabase_url = (
+        str(getattr(env, "SUPABASE_URL", "")).rstrip("/")
+        if env is not None else os.environ.get("SUPABASE_URL", "").rstrip("/")
+    )
+    app.state.supabase_anon_key = (
+        str(getattr(env, "SUPABASE_ANON_KEY", ""))
+        if env is not None else os.environ.get("SUPABASE_ANON_KEY", "")
+    )
+    def binding(name: str, default: str = "") -> str:
+        return str(getattr(env, name, default)) if env is not None else os.environ.get(name, default)
+    app.state.supabase_providers = {
+        "email": binding("AUTH_EMAIL_ENABLED", "true").lower() == "true",
+        "github": binding("AUTH_GITHUB_ENABLED", "false").lower() == "true",
+        "google": binding("AUTH_GOOGLE_ENABLED", "false").lower() == "true",
+        "apple": binding("AUTH_APPLE_ENABLED", "false").lower() == "true",
+    }
     model_proxy = getattr(env, "MODEL_PROXY", None) if env is not None else None
     app.state.model_client = ModelClient(config, service_binding=model_proxy)
 
@@ -162,7 +179,7 @@ async def security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' https://avatars.githubusercontent.com data:; "
-        "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://*.supabase.co; "
         "font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com"
     )
     if request.url.path.startswith("/api/") and "cache-control" not in response.headers:
@@ -195,6 +212,7 @@ if os.path.exists(static_path):
 # 注册路由
 app.include_router(config_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 app.include_router(ideas_router, prefix="/api")
 app.include_router(stream_router, prefix="/api")
 

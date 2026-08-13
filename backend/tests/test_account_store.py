@@ -45,6 +45,7 @@ def store():
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     connection.executescript(Path("migrations/0001_commercial_accounts.sql").read_text())
+    connection.executescript(Path("migrations/0002_admin_quota_audit.sql").read_text())
     yield AccountStore(Database(connection))
     connection.close()
 
@@ -96,6 +97,32 @@ async def test_session_tokens_are_stored_as_hashes(store):
     assert token not in row["token_hash"]
     assert await store.get_user_by_session(token)
     assert await store.get_user_by_session("wrong-token") is None
+
+
+async def test_admin_quota_adjustment_is_bounded_and_audited(store):
+    user = await create_user(store, "admin-quota")
+
+    updated = await store.adjust_quota(user["id"], "idea", 95, "管理员测试账号扩容")
+    assert updated["idea_limit"] == 100
+    event = (await store.quota_audit(user["id"]))[0]
+    assert event["limit_before"] == 5
+    assert event["limit_after"] == 100
+    assert event["reason"] == "管理员测试账号扩容"
+
+    await store.reserve_quota(user["id"], "admin-reservation", "idea", 10)
+    with pytest.raises(ValueError, match="used plus reserved"):
+        await store.adjust_quota(user["id"], "idea", -100, "不可低于已消费和预占")
+
+
+async def test_admin_can_clear_stuck_reservation_with_audit(store):
+    user = await create_user(store, "repair")
+    assert await store.reserve_quota(user["id"], "stuck-request", "detail", 1) == "reserved"
+
+    repaired = await store.clear_reserved_quota(user["id"], "detail", "任务中断，确认模型未调用")
+    assert repaired["detail_reserved"] == 0
+    event = (await store.quota_audit(user["id"]))[0]
+    assert event["action"] == "clear_reserved"
+    assert event["reserved_before"] == 1
 
 
 @pytest.mark.parametrize("return_to", ["//evil.example", "/\\evil.example", "https://evil.example"])

@@ -5,7 +5,7 @@ import { useApp } from '../context/app-context';
 import './Header.css';
 
 const Header = ({ currentPage, onPageChange }) => {
-  const { user, logout, loginUrl } = useApp();
+  const { user, logout } = useApp();
   const items = [
     { id: 'generate', label: '工作台', icon: Sparkles },
     { id: 'history', label: '历史', icon: Archive },
@@ -33,7 +33,7 @@ const Header = ({ currentPage, onPageChange }) => {
         ))}
       </nav>
       <div className="account-control">
-        {user ? <><span>{user.display_name}</span><button onClick={logout} aria-label="退出登录"><LogOut size={16} /></button></> : <a href={loginUrl('/')}><LogIn size={16} /> 登录</a>}
+        {user ? <><span>{user.display_name}</span><button onClick={logout} aria-label="退出登录"><LogOut size={16} /></button></> : <button onClick={() => onPageChange('login')}><LogIn size={16} /> 登录</button>}
       </div>
     </header>
   );

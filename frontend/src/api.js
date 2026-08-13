@@ -70,8 +70,27 @@ export const configAPI = {
 
 export const authAPI = {
   me: async () => (await apiClient.get('/auth/me')).data,
+  providers: async () => (await apiClient.get('/auth/providers')).data,
+  exchange: async (accessToken) => (await apiClient.post('/auth/exchange', { access_token: accessToken })).data,
   logout: async () => (await apiClient.post('/auth/logout')).data,
   loginUrl: (returnTo = '/') => `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`,
+};
+
+export const adminAPI = {
+  users: async (token, query = '') => (await apiClient.get('/admin/users', {
+    params: { q: query }, headers: { 'X-Admin-Token': token },
+  })).data,
+  adjustQuota: async (token, userId, resource, delta, reason) => (await apiClient.post(
+    `/admin/users/${userId}/quota`, { resource, delta, reason },
+    { headers: { 'X-Admin-Token': token } },
+  )).data,
+  repairQuota: async (token, userId, resource, reason) => (await apiClient.post(
+    `/admin/users/${userId}/quota/repair`, { resource, reason },
+    { headers: { 'X-Admin-Token': token } },
+  )).data,
+  audit: async (token, userId) => (await apiClient.get(`/admin/users/${userId}/quota/audit`, {
+    headers: { 'X-Admin-Token': token },
+  })).data,
 };
 
 // Ideas 生成

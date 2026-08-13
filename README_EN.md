@@ -110,6 +110,12 @@ This runs frontend lint, Node tests, production build, backend pytest, Python co
 - Invalid model JSON fails explicitly instead of returning fabricated fallback output.
 - History is persisted in D1 and isolated per authenticated user. Users may explicitly import legacy browser-local sessions.
 
+## Authentication and administration
+
+- GitHub OAuth works independently. When Supabase is configured, any valid email can register and verify an account, while GitHub, Google, and Apple providers can be enabled individually.
+- The administration page is hidden from regular navigation. Visit `/admin` directly and authenticate with `IDEA_SPARK_ADMIN_TOKEN` to search users, adjust Idea or detailed-plan limits, repair confirmed stuck reservations, and review the audit history.
+- Apple login requires an Apple Developer Service ID and private key. Unconfigured providers are never shown as broken actions.
+
 ## License
 
 Copyright © 2026 Edward. All rights reserved. The current source is viewable for evaluation only and may not be copied, modified, deployed, offered as SaaS, or used commercially without written permission. Versions previously released under MIT remain governed by their original license.

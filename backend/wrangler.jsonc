@@ -30,7 +30,11 @@
   ],
   "vars": {
     "FREE_IDEA_LIMIT": "5",
-    "FREE_DETAIL_LIMIT": "2"
+    "FREE_DETAIL_LIMIT": "2",
+    "AUTH_EMAIL_ENABLED": "true",
+    "AUTH_GITHUB_ENABLED": "false",
+    "AUTH_GOOGLE_ENABLED": "false",
+    "AUTH_APPLE_ENABLED": "false"
   },
   "routes": [
     {

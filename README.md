@@ -89,7 +89,7 @@ IDEA_SPARK_MODEL_TIMEOUT=600
 - Build command：`npm --prefix ../frontend ci && npm --prefix ../frontend run build`
 - Deploy command：`uv run pywrangler deploy`
 - Runtime secrets：`IDEA_SPARK_ADMIN_TOKEN`、模型 Base URL、模型名与 API Key
-- Account secrets：`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`
+- Account secrets：`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`；启用托管多身份登录后再设置 `SUPABASE_URL`、`SUPABASE_ANON_KEY`
 - D1：`idea-spark-production`（用户、会话、项目、方案与用量账本）
 
 敏感值只配置在 Cloudflare Worker 的 Variables & Secrets 中；仓库与构建变量中不保存明文密钥。Python Workers 目前仍处于 Cloudflare open beta，生产使用前应持续关注运行时兼容性与限制。
@@ -131,9 +131,16 @@ backend/
   tests/                    后端回归测试
 ```
 
+## 登录与管理
+
+- GitHub OAuth 可独立使用；配置 Supabase 后支持任意有效邮箱注册、邮箱验证、密码登录，以及动态启用 GitHub、Google、Apple 身份。
+- 普通用户看不到管理入口。管理员直接访问 `/admin`，输入 `IDEA_SPARK_ADMIN_TOKEN` 后，可按邮箱、用户名或用户 ID 查询账户。
+- 管理台可增加或扣减 Idea/详细方案额度、清理已确认异常的预占额度，并记录操作原因和前后值；管理员令牌只存在于当前页面内存中。
+- Apple 登录需要 Apple Developer 的 Service ID 与私钥；未完成 Provider 配置时入口不会展示。
+
 ## 商业权限与数据边界
 
-- GitHub OAuth 登录成功后签发 `HttpOnly + Secure + SameSite=Lax` 服务端会话；数据库只保存 token 哈希。
+- GitHub 或托管身份经服务端验证后签发 `HttpOnly + Secure + SameSite=Lax` 会话；数据库只保存 token 哈希。
 - 免费额度由服务端 D1 账本判定，默认每个账户 5 个 Idea、2 个详细方案；客户端数字不参与授权。
 - 生成接口要求幂等键并先占用额度，失败或中断会退回；已存在的详细方案直接读取且不重复扣额。
 - 每个项目、历史和详细方案查询都同时包含 `user_id`，禁止跨用户读取与删除。
