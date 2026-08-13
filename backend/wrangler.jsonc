@@ -8,6 +8,7 @@
     "python_dedicated_snapshot",
     "global_fetch_strictly_public"
   ],
+  "keep_vars": true,
   "python_modules": {
     "excludes": [
       "**/*.pyc",
@@ -31,6 +32,8 @@
   "vars": {
     "FREE_IDEA_LIMIT": "5",
     "FREE_DETAIL_LIMIT": "2",
+    "SUPABASE_URL": "https://lormorfnxljbnazkhsle.supabase.co",
+    "SUPABASE_ANON_KEY": "sb_publishable_gbazUx8kojZ7tXL2qsAz4Q_qSzsKRzX",
     "AUTH_EMAIL_ENABLED": "true",
     "AUTH_GITHUB_ENABLED": "true",
     "AUTH_GOOGLE_ENABLED": "true",
