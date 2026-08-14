@@ -20,7 +20,7 @@ const GenerateForm = () => {
   const remainingIdeas = user
     ? Math.max(0, user.quota.idea.limit - user.quota.idea.used - user.quota.idea.reserved)
     : 5;
-  const count = Math.min(5, remainingIdeas);
+  const [count, setCount] = useState(Math.min(5, remainingIdeas));
   const [category, setCategory] = useState('general');
   const [model, setModel] = useState('');
 
@@ -28,7 +28,7 @@ const GenerateForm = () => {
 
   const submit = (event) => {
     event.preventDefault();
-    if (direction.trim().length >= 2 && selectedModel) {
+    if (direction.trim().length >= 2 && selectedModel && count >= 1) {
       generateIdeas(direction.trim(), count, category, selectedModel);
     }
   };
@@ -65,7 +65,17 @@ const GenerateForm = () => {
             {categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
-        <label>剩余免费候选<input value={`${remainingIdeas} 个`} disabled readOnly /></label>
+        <label>
+          生成数量
+          <input
+            type="number"
+            min={1}
+            max={remainingIdeas}
+            value={count}
+            onChange={(event) => setCount(Math.max(1, Math.min(remainingIdeas, parseInt(event.target.value) || 1)))}
+            disabled={isGenerating}
+          />
+        </label>
       </div>
 
       <label className="model-field">
@@ -84,8 +94,8 @@ const GenerateForm = () => {
           <Square size={16} fill="currentColor" /> 停止生成
         </button>
       ) : (
-        count < 1 ? <a className="generate-action" href="/account">Idea 额度已用完，申请增加额度 <ArrowRight size={18} /></a> :
-          <button type="submit" className="generate-action" disabled={direction.trim().length < 2 || !selectedModel}>
+        remainingIdeas < 1 ? <a className="generate-action" href="/account">Idea 额度已用完，申请增加额度 <ArrowRight size={18} /></a> :
+          <button type="submit" className="generate-action" disabled={direction.trim().length < 2 || !selectedModel || count < 1}>
             <WandSparkles size={18} /> 生成 {count} 个候选 <ArrowRight size={18} />
           </button>
       )}
