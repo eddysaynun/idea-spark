@@ -56,6 +56,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(null);
   const [events, setEvents] = useState([]);
+  const [rechargeRecords, setRechargeRecords] = useState([]);
   const [purchaseRequests, setPurchaseRequests] = useState([]);
   const [paymentOrders, setPaymentOrders] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -77,8 +78,15 @@ export default function AdminPage() {
   };
 
   const choose = async (user) => {
-    setSelected(user); setMessage(''); setError(''); setEvents([]);
-    try { setEvents((await adminAPI.audit(token, user.id)).events); }
+    setSelected(user); setMessage(''); setError(''); setEvents([]); setRechargeRecords([]);
+    try {
+      const [auditData, rechargeData] = await Promise.all([
+        adminAPI.audit(token, user.id),
+        adminAPI.rechargeHistory(token, user.id),
+      ]);
+      setEvents(auditData.events);
+      setRechargeRecords(rechargeData.records);
+    }
     catch (reason) { setError(errorText(reason)); }
   };
 
@@ -86,7 +94,12 @@ export default function AdminPage() {
     if (failure) { setError(failure); setMessage(''); return; }
     setSelected(user); setUsers((current) => current.map((item) => item.id === user.id ? user : item));
     setMessage(success); setError('');
-    setEvents((await adminAPI.audit(token, user.id)).events);
+    const [auditData, rechargeData] = await Promise.all([
+      adminAPI.audit(token, user.id),
+      adminAPI.rechargeHistory(token, user.id),
+    ]);
+    setEvents(auditData.events);
+    setRechargeRecords(rechargeData.records);
   };
 
   const openPurchase = async (purchase) => {
@@ -127,6 +140,7 @@ export default function AdminPage() {
           <div className="selected-user"><div><span>{selected.provider}</span><h2>{selected.display_name}</h2><p>{selected.login}</p></div><code>{selected.id}</code></div>
           <div className="quota-grid"><Quota label="Idea" resource="idea" user={selected} token={token} onUpdated={updated} /><Quota label="详细方案" resource="detail" user={selected} token={token} onUpdated={updated} /></div>
           <section className="audit-list"><h3>管理员操作记录</h3>{events.length === 0 ? <p>暂无人工调整记录。</p> : events.map((event, index) => <article key={`${event.created_at}-${index}`}><span>{new Date(event.created_at).toLocaleString('zh-CN')}</span><strong>{event.resource === 'idea' ? 'Idea' : '详细方案'} · {event.action === 'adjust_limit' ? `调整 ${event.delta > 0 ? '+' : ''}${event.delta}` : '清理预占'}</strong><p>{event.reason}</p><small>上限 {event.limit_before} → {event.limit_after} · 预占 {event.reserved_before} → {event.reserved_after}</small></article>)}</section>
+          <section className="recharge-list"><h3>充值记录</h3>{rechargeRecords.length === 0 ? <p>暂无充值记录。</p> : rechargeRecords.map((record, index) => <article key={`${record.created_at}-${index}`}><div><strong>{record.package_name}</strong><span>{record.status === 'paid' ? '已支付' : record.status === 'fulfilled' ? '已完成' : record.status}</span></div><p>+{record.idea_amount} Idea · +{record.detail_amount} 详细方案</p><small>{new Date(record.created_at).toLocaleString('zh-CN')}{record.paid_at ? ` · 支付时间：${new Date(record.paid_at).toLocaleString('zh-CN')}` : ''}</small><code>¥{(record.amount_fen / 100).toFixed(2)}</code></article>)}</section>
         </>}
       </div>
     </div>

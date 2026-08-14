@@ -60,6 +60,12 @@ async def quota_audit(user_id: str, request: Request):
     return {"success": True, "events": await store(request).quota_audit(user_id)}
 
 
+@router.get("/users/{user_id}/recharge")
+async def recharge_history(user_id: str, request: Request):
+    """获取用户的充值记录"""
+    return {"success": True, "records": await store(request).recharge_history(user_id)}
+
+
 @router.get("/purchase-requests")
 async def purchase_requests(request: Request, status: str = Query("pending", pattern="^(pending|fulfilled|cancelled|)$")):
     return {"success": True, "requests": await store(request).admin_purchase_requests(status)}

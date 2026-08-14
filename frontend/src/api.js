@@ -91,6 +91,9 @@ export const adminAPI = {
   audit: async (token, userId) => (await apiClient.get(`/admin/users/${userId}/quota/audit`, {
     headers: { 'X-Admin-Token': token },
   })).data,
+  rechargeHistory: async (token, userId) => (await apiClient.get(`/admin/users/${userId}/recharge`, {
+    headers: { 'X-Admin-Token': token },
+  })).data,
   purchaseRequests: async (token, status = 'pending') => (await apiClient.get('/admin/purchase-requests', {
     params: { status }, headers: { 'X-Admin-Token': token },
   })).data,

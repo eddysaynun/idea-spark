@@ -369,6 +369,16 @@ class AccountStore:
             user_id, min(max(limit, 1), 100),
         )
 
+    async def recharge_history(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """获取用户的充值记录（支付订单）"""
+        return await self._all(
+            "SELECT id, package_id, package_name, idea_amount, detail_amount, amount_fen, currency, "
+            "channel, status, paid_at, fulfilled_at, created_at "
+            "FROM payment_orders WHERE user_id = ? AND status IN ('paid', 'fulfilled') "
+            "ORDER BY created_at DESC LIMIT ?",
+            user_id, min(max(limit, 1), 100),
+        )
+
     async def create_project(self, user_id: str, direction: str, count: int, category: str, model: str) -> Dict[str, Any]:
         project_id = str(uuid.uuid4())
         now = iso(utc_now())
