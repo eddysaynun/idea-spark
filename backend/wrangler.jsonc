@@ -12,7 +12,18 @@
   "python_modules": {
     "excludes": [
       "**/*.pyc",
-      "**/__pycache__"
+      "**/__pycache__",
+      "**/*.pyi",
+      "**/*.dist-info/**",
+      "**/tests/**",
+      "**/test_*.py",
+      "aiohttp/**",
+      "aiohappyeyeballs/**",
+      "aiosignal/**",
+      "frozenlist/**",
+      "multidict/**",
+      "propcache/**",
+      "yarl/**"
     ]
   },
   "services": [

@@ -1,11 +1,11 @@
 """OpenAI-compatible 模型调用接口。"""
 
-import aiohttp
 import json
 import logging
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from tenacity import retry, stop_after_attempt, wait_exponential
+from utils.http_client import request_text
 
 logger = logging.getLogger(__name__)
 
@@ -27,25 +27,19 @@ class ModelClient:
     def __init__(self, config: ModelConfig, service_binding=None):
         self.config = config
         self.service_binding = service_binding
-        self.session: Optional[aiohttp.ClientSession] = None
         self._detected_models: List[str] = []
     
     async def __aenter__(self):
         """异步上下文管理器进入"""
-        self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
-        )
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """异步上下文管理器退出"""
-        if self.session:
-            await self.session.close()
+        return None
 
     async def close(self):
         """关闭复用的 HTTP session。"""
-        if self.session and not self.session.closed:
-            await self.session.close()
+        return None
     
     @retry(
         stop=stop_after_attempt(3),
@@ -68,14 +62,6 @@ class ModelClient:
         Returns:
             模型生成的文本
         """
-        # 确保 session 已初始化
-        if self.service_binding is None and (
-            self.session is None or self.session.closed
-        ):
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
-            )
-        
         try:
             return await self._call_compatible(
                 prompt, model, thinking=thinking, max_tokens=max_tokens
@@ -101,14 +87,6 @@ class ModelClient:
         Yields:
             流式数据块 (包含 thinking 和 content)
         """
-        # 确保 session 已初始化
-        if self.service_binding is None and (
-            self.session is None or self.session.closed
-        ):
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
-            )
-        
         try:
             async for chunk in self._call_compatible_stream(
                 prompt, model, thinking=thinking, max_tokens=max_tokens
@@ -167,16 +145,10 @@ class ModelClient:
             text_data = await response.text()
             return self._parse_completion_response(response.status, text_data)
 
-        async with self.session.post(url, headers=headers, json=payload) as response:
-            logger.info(f"📡 Response status: {response.status}")
-            
-            if response.status != 200:
-                error_text = await response.text()
-                logger.error(f"❌ Compatible API error: {response.status} - {error_text[:500]}")
-                raise RuntimeError(f"Compatible API error: {response.status} - {error_text[:200]}")
-            
-            text_data = await response.text()
-            return self._parse_completion_response(response.status, text_data)
+        status, text_data = await request_text(
+            url, method="POST", headers=headers, body=json.dumps(payload), timeout=self.config.timeout
+        )
+        return self._parse_completion_response(status, text_data)
 
     async def _call_compatible_stream(
         self,
@@ -240,50 +212,17 @@ class ModelClient:
                 )
             return
 
-        async with self.session.post(url, headers=headers, json=payload) as response:
-            logger.info(f"📡 Response status: {response.status}")
-            
-            if response.status != 200:
-                error_text = await response.text()
-                logger.error(f"❌ Compatible API error: {response.status} - {error_text[:500]}")
-                raise RuntimeError(f"Compatible API error: {response.status} - {error_text[:200]}")
-            
-            # 读取流式响应
-            full_thinking = ""
-            full_content = ""
-            
-            async for line in response.content:
-                line_str = line.decode('utf-8').strip()
-                
-                if line_str.startswith('data: '):
-                    data_str = line_str[6:]
-                    
-                    if data_str == '[DONE]':
-                        break
-                    
-                    try:
-                        data = json.loads(data_str)
-                        
-                        choice = data.get("choices", [{}])[0]
-                        thinking, content = self._extract_stream_parts(choice)
-                        if thinking:
-                            full_thinking += thinking
-                            yield {"type": "thinking", "data": thinking}
-                        if content:
-                            full_content += content
-                            yield {"type": "content", "data": content}
-                                
-                    except json.JSONDecodeError:
-                        continue
-            
-            # 流式结束后统一打印日志
-            logger.info(f"✅ Stream completed: thinking={len(full_thinking)} chars, content={len(full_content)} chars")
-            logger.debug(f"📝 Full thinking: {full_thinking[:500]}...")
-            logger.debug(f"📝 Full content: {full_content[:500]}...")
-            if not full_content:
-                raise RuntimeError(
-                    "模型未返回最终内容，可能是推理耗尽了输出预算"
-                )
+        status, stream_text = await request_text(
+            url, method="POST", headers=headers, body=json.dumps(payload), timeout=self.config.timeout
+        )
+        if status != 200:
+            raise RuntimeError(f"Compatible API error: {status} - {stream_text[:200]}")
+        has_content = False
+        for chunk in self._parse_sse_text(stream_text):
+            has_content = has_content or chunk["type"] == "content"
+            yield chunk
+        if not has_content:
+            raise RuntimeError("模型未返回最终内容，可能是推理耗尽了输出预算")
 
     async def _binding_fetch(self, url: str, **options):
         """通过 Cloudflare Service Binding 调用模型代理。"""
@@ -383,14 +322,6 @@ class ModelClient:
         
         logger.info(f"🔍 Detecting models from: {endpoint}")
         
-        # 确保 session 已初始化
-        if self.service_binding is None and (
-            self.session is None or self.session.closed
-        ):
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
-            )
-        
         try:
             if self.service_binding is not None:
                 headers = {}
@@ -407,18 +338,14 @@ class ModelClient:
                     return []
                 return self._extract_model_names(await response.json())
 
-            async with self.session.get(endpoint) as response:
-                logger.info(f"📡 Response status: {response.status}")
-                
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"❌ Failed to get models: {response.status} - {error_text[:200]}")
-                    return []
-                
-                data = await response.json()
-                logger.info(f"📄 Response data type: {type(data)}")
-                
-                return self._extract_model_names(data)
+            headers = {"Authorization": f"Bearer {self.config.api_key}"} if self.config.api_key else {}
+            status, text_data = await request_text(endpoint, headers=headers, timeout=self.config.timeout)
+            if status != 200:
+                logger.error(f"❌ Failed to get models: {status} - {text_data[:200]}")
+                return []
+            data = json.loads(text_data)
+            logger.info(f"📄 Response data type: {type(data)}")
+            return self._extract_model_names(data)
         
         except Exception as e:
             logger.error(f"❌ Model detection failed: {e}")

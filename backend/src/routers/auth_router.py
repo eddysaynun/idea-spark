@@ -1,16 +1,17 @@
 """Managed multi-provider authentication and commercial account sessions."""
 
 import logging
+import json
 import re
 from urllib.parse import urlencode
 
-import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
 
 from services.account_store import AccountStore
 from services.auth import SESSION_COOKIE, current_user
+from utils.http_client import request_text
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -56,10 +57,8 @@ async def _fetch_json(request: Request, url: str, *, method: str = "GET", header
         response = await runtime_fetch(url, method=method, headers=headers or {}, body=body)
         data = await response.json()
         return response.status, data
-    timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.request(method, url, headers=headers, data=body) as response:
-            return response.status, await response.json()
+    status, text = await request_text(url, method=method, headers=headers, body=body, timeout=20)
+    return status, json.loads(text)
 
 
 async def _github_profile(request: Request, code: str, client_id: str, client_secret: str):
@@ -88,25 +87,23 @@ async def _github_profile(request: Request, code: str, client_id: str, client_se
             raise HTTPException(status_code=401, detail="无法读取 GitHub 用户信息")
         return await profile_response.json()
 
-    timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(
-            "https://github.com/login/oauth/access_token",
-            headers={"Accept": "application/json"},
-            data={"client_id": client_id, "client_secret": client_secret, "code": code},
-        ) as response:
-            token_data = await response.json()
-        access_token = token_data.get("access_token", "")
-        if not access_token:
-            raise HTTPException(status_code=401, detail="GitHub 登录失败")
-        async with session.get(
-            "https://api.github.com/user",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json", "User-Agent": "Idea-Spark"},
-        ) as response:
-            profile = await response.json()
-            if response.status != 200:
-                raise HTTPException(status_code=401, detail="无法读取 GitHub 用户信息")
-    return profile
+    token_status, token_text = await request_text(
+        "https://github.com/login/oauth/access_token",
+        method="POST",
+        headers={"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"},
+        body=urlencode({"client_id": client_id, "client_secret": client_secret, "code": code}),
+    )
+    token_data = json.loads(token_text)
+    access_token = token_data.get("access_token", "") if token_status == 200 else ""
+    if not access_token:
+        raise HTTPException(status_code=401, detail="GitHub 登录失败")
+    profile_status, profile_text = await request_text(
+        "https://api.github.com/user",
+        headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json", "User-Agent": "Idea-Spark"},
+    )
+    if profile_status != 200:
+        raise HTTPException(status_code=401, detail="无法读取 GitHub 用户信息")
+    return json.loads(profile_text)
 
 
 @router.get("/login")

@@ -1,5 +1,6 @@
 import pytest
 
+import services.models.model_client as model_client_module
 from services.models.model_client import ModelClient, ModelConfig
 
 
@@ -116,6 +117,23 @@ async def test_qwen35_can_enable_thinking_per_stage():
     request_body = __import__("json").loads(binding.calls[0][1]["body"])
     assert request_body["chat_template_kwargs"] == {"enable_thinking": True}
     assert request_body["max_tokens"] == 32768
+
+
+@pytest.mark.asyncio
+async def test_local_fallback_uses_standard_library_transport(monkeypatch):
+    calls = []
+
+    async def fake_request(url, **options):
+        calls.append((url, options))
+        return 200, '{"choices":[{"message":{"content":"local result"}}]}'
+
+    monkeypatch.setattr(model_client_module, "request_text", fake_request)
+    client = ModelClient(ModelConfig(base_url="https://model.example/v1", api_key="local-key"))
+
+    assert await client.generate("hello") == "local result"
+    assert calls[0][0] == "https://model.example/v1/chat/completions"
+    assert calls[0][1]["method"] == "POST"
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer local-key"
 
 
 @pytest.mark.asyncio
