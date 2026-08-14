@@ -50,30 +50,6 @@ export async function verifyParameters(parameters, signature, publicKeyPem) {
   );
 }
 
-export function extractSignedResponse(text, field) {
-  const marker = `"${field}"`;
-  const markerIndex = text.indexOf(marker);
-  if (markerIndex < 0) return '';
-  const start = text.indexOf('{', markerIndex + marker.length);
-  if (start < 0) return '';
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < text.length; index += 1) {
-    const character = text[index];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === '\\') escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') inString = true;
-    else if (character === '{') depth += 1;
-    else if (character === '}' && --depth === 0) return text.slice(start, index + 1);
-  }
-  return '';
-}
-
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -103,51 +79,42 @@ export function alipayTimestamp(date = new Date()) {
 }
 
 async function createCheckout(payload, env) {
-  if (!payload.order_id || !Number.isInteger(payload.amount_fen) || payload.amount_fen <= 0) {
+  const scene = payload.scene === 'mobile' ? 'mobile' : payload.scene === 'desktop' ? 'desktop' : '';
+  let notifyUrl;
+  let returnUrl;
+  try {
+    notifyUrl = new URL(payload.notify_url);
+    returnUrl = new URL(payload.return_url);
+  } catch {
+    return json({ error: 'invalid callback url' }, 400);
+  }
+  if (!/^[a-zA-Z0-9-]{1,64}$/.test(payload.order_id || '')
+      || !Number.isInteger(payload.amount_fen) || payload.amount_fen <= 0 || !scene
+      || notifyUrl.protocol !== 'https:' || returnUrl.protocol !== 'https:') {
     return json({ error: 'invalid order' }, 400);
   }
   const providerOrderId = `IS${payload.order_id.replaceAll('-', '')}`;
+  const mobile = scene === 'mobile';
   const parameters = new URLSearchParams({
     app_id: env.ALIPAY_APP_ID,
-    method: 'alipay.trade.precreate',
+    method: mobile ? 'alipay.trade.wap.pay' : 'alipay.trade.page.pay',
     format: 'JSON',
     charset: 'utf-8',
     sign_type: 'RSA2',
     timestamp: alipayTimestamp(),
     version: '1.0',
-    notify_url: payload.notify_url,
+    notify_url: notifyUrl.toString(),
+    return_url: returnUrl.toString(),
     biz_content: JSON.stringify({
       out_trade_no: providerOrderId,
       total_amount: (payload.amount_fen / 100).toFixed(2),
       subject: String(payload.subject || 'Idea Spark 创作额度').slice(0, 256),
+      product_code: mobile ? 'QUICK_WAP_WAY' : 'FAST_INSTANT_TRADE_PAY',
       timeout_express: '15m',
     }),
   });
   parameters.set('sign', await signParameters(parameters, env.ALIPAY_PRIVATE_KEY));
-  const response = await fetch(ALIPAY_GATEWAY, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
-    body: parameters,
-  });
-  const responseText = await response.text();
-  let result;
-  try { result = JSON.parse(responseText); } catch { return json({ error: 'invalid alipay response' }, 502); }
-  const trade = result.alipay_trade_precreate_response;
-  const responseSignature = result.sign || '';
-  const signedPayload = extractSignedResponse(responseText, 'alipay_trade_precreate_response');
-  const signatureValid = signedPayload && responseSignature && await crypto.subtle.verify(
-    'RSASSA-PKCS1-v1_5', await publicKey(env.ALIPAY_PUBLIC_KEY),
-    Uint8Array.from(atob(responseSignature), (character) => character.charCodeAt(0)), TEXT_ENCODER.encode(signedPayload),
-  );
-  if (!signatureValid) {
-    console.error(JSON.stringify({ event: 'alipay_response_signature_invalid' }));
-    return json({ error: 'invalid alipay response signature' }, 502);
-  }
-  if (!response.ok || trade?.code !== '10000' || !trade.qr_code) {
-    console.error(JSON.stringify({ event: 'alipay_precreate_failed', code: trade?.code, sub_code: trade?.sub_code }));
-    return json({ error: 'alipay precreate failed' }, 502);
-  }
-  return json({ provider_order_id: providerOrderId, pay_url: trade.qr_code });
+  return json({ provider_order_id: providerOrderId, pay_url: `${ALIPAY_GATEWAY}?${parameters}` });
 }
 
 async function verifyNotification(payload, env) {

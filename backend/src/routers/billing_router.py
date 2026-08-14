@@ -28,6 +28,11 @@ def registry(request: Request):
     return request.app.state.payment_registry
 
 
+def payment_scene(user_agent: str) -> str:
+    value = user_agent.lower()
+    return "mobile" if any(marker in value for marker in ("android", "iphone", "ipad", "ipod", "mobile")) else "desktop"
+
+
 @router.get("/packages")
 async def packages(request: Request, _user=Depends(current_user)):
     channels = registry(request).public_status()
@@ -80,7 +85,11 @@ async def create_order(body: PaymentOrderRequest, request: Request, user=Depends
     store = request.app.state.account_store
     created = await store.create_payment_order(user["id"], package, body.channel)
     try:
-        checkout = await provider.create_checkout(created, str(request.base_url).rstrip("/"))
+        checkout = await provider.create_checkout(
+            created,
+            str(request.base_url).rstrip("/"),
+            payment_scene(request.headers.get("user-agent", "")),
+        )
         created = await store.attach_payment_checkout(
             user["id"], created["id"], checkout["provider_order_id"], checkout["pay_url"]
         )

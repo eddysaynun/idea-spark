@@ -18,7 +18,7 @@ class PaymentNotification:
 class PaymentProvider:
     channel = ""
 
-    async def create_checkout(self, order: Dict[str, Any], origin: str) -> Dict[str, str]:
+    async def create_checkout(self, order: Dict[str, Any], origin: str, scene: str) -> Dict[str, str]:
         raise NotImplementedError
 
     async def verify_notification(self, headers: Dict[str, str], body: bytes) -> PaymentNotification:
@@ -54,12 +54,14 @@ class AlipayProvider(PaymentProvider):
         except json.JSONDecodeError as exc:
             raise ValueError("支付宝支付网关返回无效响应") from exc
 
-    async def create_checkout(self, order: Dict[str, Any], origin: str) -> Dict[str, str]:
+    async def create_checkout(self, order: Dict[str, Any], origin: str, scene: str) -> Dict[str, str]:
         result = await self._call("/checkout", {
             "order_id": order["id"],
             "amount_fen": order["amount_fen"],
             "subject": f"Idea Spark {order['package_name']} 创作额度",
             "notify_url": f"{origin}/api/billing/webhooks/alipay",
+            "return_url": f"{origin}/account?payment=return&order_id={order['id']}",
+            "scene": scene,
         })
         return {
             "provider_order_id": result["provider_order_id"],

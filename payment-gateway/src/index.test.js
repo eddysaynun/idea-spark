@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
 
-import worker, { alipayTimestamp, canonicalize, extractSignedResponse, signParameters, verifyParameters } from './index.js';
+import worker, { alipayTimestamp, canonicalize, signParameters, verifyParameters } from './index.js';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', {
   modulusLength: 2048,
@@ -44,40 +44,55 @@ test('gateway rejects invalid notification signature', async () => {
   assert.equal(response.status, 400);
 });
 
-test('checkout rejects an unsigned Alipay response', async (context) => {
-  context.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
-    alipay_trade_precreate_response: { code: '10000', qr_code: 'https://qr.alipay.com/fake' },
-  })));
+test('checkout rejects non-HTTPS callbacks and unknown payment scenes', async () => {
   const response = await worker.fetch(new Request('https://internal/checkout', {
     method: 'POST',
     headers: { authorization: 'Bearer internal', 'content-type': 'application/json' },
-    body: JSON.stringify({ order_id: 'order', amount_fen: 2900, notify_url: 'https://idea.example/webhook' }),
+    body: JSON.stringify({
+      order_id: 'order', amount_fen: 2900, scene: 'tablet',
+      notify_url: 'http://idea.example/webhook', return_url: 'https://idea.example/account',
+    }),
   }), {
     PAYMENT_GATEWAY_TOKEN: 'internal', ALIPAY_APP_ID: 'app', ALIPAY_SELLER_ID: 'seller', ALIPAY_PRIVATE_KEY: privateKey, ALIPAY_PUBLIC_KEY: publicKey,
   });
-  assert.equal(response.status, 502);
+  assert.equal(response.status, 400);
 });
 
-test('checkout accepts a correctly signed Alipay QR response', async (context) => {
-  const tradeText = '{"code":"10000","msg":"Success","qr_code":"https://qr.alipay.com/real","nested":{"value":"brace } in string"}}';
-  const signatureBytes = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    await crypto.subtle.importKey('pkcs8', Buffer.from(privateKey.replace(/-----[^-]+-----|\s/g, ''), 'base64'), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']),
-    new TextEncoder().encode(tradeText),
-  );
-  const responseText = `{"alipay_trade_precreate_response":${tradeText},"sign":"${Buffer.from(signatureBytes).toString('base64')}"}`;
-  assert.equal(extractSignedResponse(responseText, 'alipay_trade_precreate_response'), tradeText);
-  context.mock.method(globalThis, 'fetch', async () => new Response(responseText));
+for (const [scene, method, productCode] of [
+  ['desktop', 'alipay.trade.page.pay', 'FAST_INSTANT_TRADE_PAY'],
+  ['mobile', 'alipay.trade.wap.pay', 'QUICK_WAP_WAY'],
+]) test(`checkout creates a signed ${scene} website payment URL`, async () => {
   const response = await worker.fetch(new Request('https://internal/checkout', {
     method: 'POST',
     headers: { authorization: 'Bearer internal', 'content-type': 'application/json' },
-    body: JSON.stringify({ order_id: 'order', amount_fen: 2900, subject: 'Starter', notify_url: 'https://idea.example/webhook' }),
+    body: JSON.stringify({
+      order_id: 'order-id', amount_fen: 2900, subject: 'Starter', scene,
+      notify_url: 'https://idea.example/webhook', return_url: 'https://idea.example/account?payment=return',
+    }),
   }), {
     PAYMENT_GATEWAY_TOKEN: 'internal', ALIPAY_APP_ID: 'app', ALIPAY_SELLER_ID: 'seller',
     ALIPAY_PRIVATE_KEY: privateKey, ALIPAY_PUBLIC_KEY: publicKey,
   });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { provider_order_id: 'ISorder', pay_url: 'https://qr.alipay.com/real' });
+  const result = await response.json();
+  const paymentUrl = new URL(result.pay_url);
+  const parameters = paymentUrl.searchParams;
+  assert.equal(result.provider_order_id, 'ISorderid');
+  assert.equal(paymentUrl.origin + paymentUrl.pathname, 'https://openapi.alipay.com/gateway.do');
+  assert.equal(parameters.get('method'), method);
+  assert.equal(parameters.get('return_url'), 'https://idea.example/account?payment=return');
+  assert.deepEqual(JSON.parse(parameters.get('biz_content')), {
+    out_trade_no: 'ISorderid', total_amount: '29.00', subject: 'Starter',
+    product_code: productCode, timeout_express: '15m',
+  });
+  const signature = parameters.get('sign');
+  parameters.delete('sign');
+  const signatureValid = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5',
+    await crypto.subtle.importKey('spki', Buffer.from(publicKey.replace(/-----[^-]+-----|\s/g, ''), 'base64'), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']),
+    Buffer.from(signature, 'base64'), new TextEncoder().encode(canonicalize(parameters.entries())),
+  );
+  assert.equal(signatureValid, true);
 });
 
 test('verified notification returns server fulfillment fields', async () => {

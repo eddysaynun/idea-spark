@@ -19,6 +19,10 @@
     {
       "binding": "MODEL_PROXY",
       "service": "idea-spark-model-proxy"
+    },
+    {
+      "binding": "PAYMENT_GATEWAY",
+      "service": "idea-spark-payment-gateway"
     }
   ],
   "d1_databases": [
@@ -38,7 +42,7 @@
     "AUTH_GITHUB_ENABLED": "true",
     "AUTH_GOOGLE_ENABLED": "true",
     "AUTH_APPLE_ENABLED": "false",
-    "ALIPAY_ENABLED": "false"
+    "ALIPAY_ENABLED": "true"
   },
   "routes": [
     {

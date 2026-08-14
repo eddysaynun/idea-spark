@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from routers.billing_router import PaymentOrderRequest, create_order, packages
+from routers.billing_router import PaymentOrderRequest, create_order, packages, payment_scene
 from services.payments import AlipayProvider, PaymentRegistry
 
 
@@ -49,13 +49,22 @@ class FakeBinding:
 
 @pytest.mark.asyncio
 async def test_alipay_provider_uses_private_gateway_binding():
-    binding = FakeBinding({"provider_order_id": "ISorder", "pay_url": "https://qr.alipay.com/order"})
+    binding = FakeBinding({"provider_order_id": "ISorder", "pay_url": "https://openapi.alipay.com/order"})
     provider = AlipayProvider(binding, "internal-token")
 
     checkout = await provider.create_checkout({
         "id": "order-id", "amount_fen": 2900, "package_name": "Starter",
-    }, "https://idea.example")
+    }, "https://idea.example", "mobile")
 
-    assert checkout == {"provider_order_id": "ISorder", "pay_url": "https://qr.alipay.com/order"}
+    assert checkout == {"provider_order_id": "ISorder", "pay_url": "https://openapi.alipay.com/order"}
     assert binding.calls[0][0] == "https://idea-spark-payment.internal/checkout"
     assert binding.calls[0][1]["headers"]["Authorization"] == "Bearer internal-token"
+    payload = __import__("json").loads(binding.calls[0][1]["body"])
+    assert payload["scene"] == "mobile"
+    assert payload["return_url"] == "https://idea.example/account?payment=return&order_id=order-id"
+
+
+def test_payment_scene_selects_mobile_and_desktop_website_products():
+    assert payment_scene("Mozilla/5.0 (iPhone; Mobile)") == "mobile"
+    assert payment_scene("Mozilla/5.0 (Linux; Android 16)") == "mobile"
+    assert payment_scene("Mozilla/5.0 (Macintosh; Intel Mac OS X)") == "desktop"
