@@ -79,7 +79,9 @@ async def generate_ideas_stream(
         ideas = []
         try:
             yield sse({"type": "start", "data": {"session_id": project["id"], "direction": body.direction}})
-            pipeline = IdeaPipeline(request.app.state.model_client, selected_model)
+            pipeline = IdeaPipeline(
+                request.app.state.model_client, selected_model, project["id"]
+            )
             events = pipeline.run_events(body.direction.strip(), body.count, body.category)
             async for event in with_heartbeat(events):
                 if event is None:

@@ -9,9 +9,10 @@ from services.agents.idea_agent import IdeaOutputParser
 class IdeaPipeline:
     """探索候选、批判评分，再输出严格结构化结果。"""
 
-    def __init__(self, model_client, model=None):
+    def __init__(self, model_client, model=None, trace_id=""):
         self.model_client = model_client
         self.model = model
+        self.trace_id = trace_id
         self.parser = IdeaOutputParser()
 
     async def run_events(
@@ -21,43 +22,32 @@ class IdeaPipeline:
         yield self._progress("机会探索", 10, f"正在从多个切入角度探索 {candidate_count} 个候选…")
 
         explorer_content = ""
-        reasoning_preview = ""
-        content_preview = ""
         async for chunk in self.model_client.generate_stream(
             self._explorer_prompt(direction, candidate_count, category),
             self.model,
             thinking=False,
+            trace_id=self.trace_id,
+            stage="explorer",
         ):
-            if chunk["type"] == "thinking":
-                reasoning_preview += chunk["data"]
-                if len(reasoning_preview) >= 160:
-                    yield {"type": "reasoning", "data": reasoning_preview}
-                    reasoning_preview = ""
-            elif chunk["type"] == "content":
+            if chunk["type"] == "content":
                 explorer_content += chunk["data"]
-                content_preview += chunk["data"]
-                if len(content_preview) >= 160:
-                    yield {"type": "text", "data": content_preview}
-                    content_preview = ""
             elif chunk["type"] == "error":
                 raise RuntimeError(chunk["data"])
-
-        if reasoning_preview:
-            yield {"type": "reasoning", "data": reasoning_preview}
-        if content_preview:
-            yield {"type": "text", "data": content_preview}
 
         try:
             candidates = self.parser._parse_ideas_response(explorer_content, candidate_count)
         except ValueError as exc:
             yield self._progress("修复探索结果", 36, "模型输出结构不完整，正在进行一次受控修复…")
             repaired = await self.model_client.generate(
-                self._repair_prompt("机会探索", candidate_count, explorer_content, str(exc)), self.model
+                self._repair_prompt("机会探索", candidate_count, explorer_content, str(exc)),
+                self.model,
+                trace_id=self.trace_id,
+                stage="explorer_repair",
             )
             candidates = self.parser._parse_ideas_response(repaired, candidate_count)
         yield self._progress("批判评估", 48, "正在检查痛点强度、差异化、可执行性与证据缺口…")
         critiques = await self._generate_json(
-            "批判评估",
+            "critic",
             self._critic_prompt(direction, candidates),
             len(candidates),
             thinking=True,
@@ -65,7 +55,7 @@ class IdeaPipeline:
 
         yield self._progress("结构化定稿", 76, f"正在去重并定稿最有潜力的 {count} 个机会…")
         final_data = await self._generate_json(
-            "结构化定稿", self._editor_prompt(direction, count, candidates, critiques), count
+            "editor", self._editor_prompt(direction, count, candidates, critiques), count
         )
         try:
             ideas = self.parser._validate_and_enrich(final_data, count)
@@ -79,6 +69,8 @@ class IdeaPipeline:
                 ),
                 self.model,
                 thinking=False,
+                trace_id=self.trace_id,
+                stage="editor_contract_repair",
             )
             ideas = self.parser._validate_and_enrich(
                 self.parser._parse_ideas_response(repaired, count), count
@@ -105,6 +97,8 @@ class IdeaPipeline:
             self.model,
             thinking=thinking,
             max_tokens=32768 if thinking else None,
+            trace_id=self.trace_id,
+            stage=stage,
         )
         try:
             return self.parser._parse_ideas_response(content, expected_count)
@@ -113,6 +107,8 @@ class IdeaPipeline:
                 self._repair_prompt(stage, expected_count, content, str(exc)),
                 self.model,
                 thinking=False,
+                trace_id=self.trace_id,
+                stage=f"{stage}_repair",
             )
             return self.parser._parse_ideas_response(repaired, expected_count)
 

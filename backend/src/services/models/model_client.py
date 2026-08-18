@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -52,6 +53,8 @@ class ModelClient:
         *,
         thinking: bool = False,
         max_tokens: Optional[int] = None,
+        trace_id: str = "",
+        stage: str = "",
     ) -> str:
         """
         生成文本（非流式）
@@ -62,11 +65,17 @@ class ModelClient:
         Returns:
             模型生成的文本
         """
+        started = time.perf_counter()
         try:
-            return await self._call_compatible(
+            result = await self._call_compatible(
                 prompt, model, thinking=thinking, max_tokens=max_tokens
             )
+            self._log_call(
+                trace_id, stage, model, thinking, False, started, len(result), True
+            )
+            return result
         except Exception as e:
+            self._log_call(trace_id, stage, model, thinking, False, started, 0, False)
             logger.error(f"Model generation failed: {e}")
             raise
 
@@ -77,6 +86,8 @@ class ModelClient:
         *,
         thinking: bool = False,
         max_tokens: Optional[int] = None,
+        trace_id: str = "",
+        stage: str = "",
     ):
         """
         流式生成文本
@@ -87,14 +98,47 @@ class ModelClient:
         Yields:
             流式数据块 (包含 thinking 和 content)
         """
+        started = time.perf_counter()
+        output_chars = 0
         try:
             async for chunk in self._call_compatible_stream(
                 prompt, model, thinking=thinking, max_tokens=max_tokens
             ):
+                if chunk["type"] == "content":
+                    output_chars += len(chunk["data"])
                 yield chunk
+            self._log_call(
+                trace_id, stage, model, thinking, True, started, output_chars, True
+            )
         except Exception as e:
+            self._log_call(
+                trace_id, stage, model, thinking, True, started, output_chars, False
+            )
             logger.error(f"Model stream generation failed: {e}")
             yield {"type": "error", "data": str(e)}
+
+    def _log_call(
+        self,
+        trace_id: str,
+        stage: str,
+        model: Optional[str],
+        thinking: bool,
+        stream: bool,
+        started: float,
+        output_chars: int,
+        success: bool,
+    ) -> None:
+        logger.info(json.dumps({
+            "event": "model_call",
+            "trace_id": trace_id,
+            "stage": stage,
+            "model": model or self.config.model,
+            "thinking": thinking,
+            "stream": stream,
+            "duration_ms": round((time.perf_counter() - started) * 1000),
+            "output_chars": output_chars,
+            "success": success,
+        }, ensure_ascii=False))
     
     async def _call_compatible(
         self,
@@ -133,7 +177,6 @@ class ModelClient:
         self._apply_model_compatibility(payload, model, thinking)
         
         logger.info(f"📡 Calling compatible API: {url} with model: {model}")
-        logger.debug(f"📝 Request payload: {json.dumps(payload, ensure_ascii=False)[:500]}")
         
         if self.service_binding is not None:
             response = await self._binding_fetch(

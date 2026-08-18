@@ -119,16 +119,22 @@ class IdeaOutputParser:
 
 
 class DetailGenerationAgent:
-    def __init__(self, model_client, model=None):
+    def __init__(self, model_client, model=None, trace_id=""):
         self.model_client = model_client
         self.model = model
+        self.trace_id = trace_id
         self.state = AgentState.IDLE
 
     async def generate_detail(self, idea: IdeaItem, callback=None) -> str:
         try:
             await self._update_progress(AgentState.THINKING, "分析机会", 15, "正在分析核心要素…", callback)
             await self._update_progress(AgentState.GENERATING, "生成方案", 40, "正在生成落地方案…", callback)
-            plan = await self.model_client.generate(self._build_detail_prompt(idea), self.model)
+            plan = await self.model_client.generate(
+                self._build_detail_prompt(idea),
+                self.model,
+                trace_id=self.trace_id,
+                stage="detail",
+            )
             await self._update_progress(AgentState.REFINING, "检查方案", 75, "正在检查假设与风险…", callback)
             plan = self._format_plan(plan)
             if len(plan) < 200:

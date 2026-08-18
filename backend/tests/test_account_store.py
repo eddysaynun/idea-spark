@@ -61,12 +61,42 @@ def store():
     connection.executescript(Path("migrations/0002_admin_quota_audit.sql").read_text())
     connection.executescript(Path("migrations/0003_purchase_requests.sql").read_text())
     connection.executescript(Path("migrations/0004_payment_orders.sql").read_text())
+    connection.executescript(Path("migrations/0005_atomic_quota_reservations.sql").read_text())
     yield AccountStore(Database(connection))
     connection.close()
 
 
 async def create_user(store, subject):
     return await store.upsert_github_user(subject, f"user-{subject}", f"User {subject}", "")
+
+
+def test_quota_migration_preserves_prior_admin_reservation_repairs():
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(Path("migrations/0001_commercial_accounts.sql").read_text())
+    connection.executescript(Path("migrations/0002_admin_quota_audit.sql").read_text())
+    connection.execute(
+        "INSERT INTO users(id, provider, provider_subject, login, display_name, created_at, updated_at) "
+        "VALUES('user-1', 'github', 'subject', 'user', 'User', '2026-01-01Z', '2026-01-01Z')"
+    )
+    connection.execute(
+        "INSERT INTO usage_events(id, user_id, reservation_key, resource, amount, outcome, created_at) "
+        "VALUES('event-1', 'user-1', 'request-1', 'idea', 2, 'reserved', '2026-01-02Z')"
+    )
+    connection.execute(
+        "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, "
+        "reserved_before, reserved_after, reason, created_at) "
+        "VALUES('audit-1', 'user-1', 'idea', 'clear_reserved', 0, 5, 5, 2, 0, 'manual repair', '2026-01-03Z')"
+    )
+
+    connection.executescript(Path("migrations/0005_atomic_quota_reservations.sql").read_text())
+
+    reservation = connection.execute(
+        "SELECT outcome FROM quota_reservations WHERE user_id = 'user-1'"
+    ).fetchone()
+    user = connection.execute("SELECT idea_reserved FROM users WHERE id = 'user-1'").fetchone()
+    assert reservation[0] == "refunded"
+    assert user[0] == 0
+    connection.close()
 
 
 async def test_projects_are_strictly_scoped_by_user(store):
@@ -91,6 +121,28 @@ async def test_quota_reservation_is_bounded_and_idempotent(store):
     refreshed = await store._first("SELECT * FROM users WHERE id = ?", user["id"])
     assert refreshed["idea_used"] == 5
     assert refreshed["idea_reserved"] == 0
+
+
+async def test_quota_reservation_uses_one_atomic_state_row(store):
+    user = await create_user(store, "quota-state")
+
+    assert await store.reserve_quota(user["id"], "atomic-request-0001", "idea", 2) == "reserved"
+    reservation = await store._first(
+        "SELECT outcome, amount FROM quota_reservations WHERE user_id = ? AND reservation_key = ?",
+        user["id"], "atomic-request-0001",
+    )
+    assert reservation == {"outcome": "reserved", "amount": 2}
+
+    await store.settle_quota(user["id"], "project", "atomic-request-0001", "idea", 2, True)
+    reservation = await store._first(
+        "SELECT outcome, project_id FROM quota_reservations WHERE user_id = ? AND reservation_key = ?",
+        user["id"], "atomic-request-0001",
+    )
+    counters = await store._first(
+        "SELECT idea_used, idea_reserved FROM users WHERE id = ?", user["id"]
+    )
+    assert reservation == {"outcome": "committed", "project_id": "project"}
+    assert counters == {"idea_used": 2, "idea_reserved": 0}
 
 
 async def test_failed_detail_reservation_is_refunded(store):
@@ -127,6 +179,20 @@ async def test_admin_quota_adjustment_is_bounded_and_audited(store):
     await store.reserve_quota(user["id"], "admin-reservation", "idea", 10)
     with pytest.raises(ValueError, match="used plus reserved"):
         await store.adjust_quota(user["id"], "idea", -100, "不可低于已消费和预占")
+
+
+async def test_admin_quota_adjustment_rolls_back_when_audit_fails(store):
+    user = await create_user(store, "admin-atomic")
+    store.db.connection.execute(
+        "CREATE TRIGGER reject_admin_audit BEFORE INSERT ON admin_quota_events "
+        "BEGIN SELECT RAISE(ABORT, 'audit failed'); END"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="audit failed"):
+        await store.adjust_quota(user["id"], "idea", 10, "验证管理员操作原子性")
+
+    refreshed = await store._first("SELECT idea_limit FROM users WHERE id = ?", user["id"])
+    assert refreshed["idea_limit"] == 5
 
 
 async def test_admin_can_clear_stuck_reservation_with_audit(store):
@@ -207,6 +273,20 @@ async def test_verified_delayed_notification_fulfills_expired_order(store):
     assert result["status"] == "fulfilled"
     refreshed = await store._first("SELECT idea_limit, detail_limit FROM users WHERE id = ?", user["id"])
     assert refreshed == {"idea_limit": 25, "detail_limit": 7}
+
+
+async def test_payment_order_list_marks_abandoned_orders_expired(store):
+    user = await create_user(store, "payment-list-expired")
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+    order = await store.create_payment_order(user["id"], package, "alipay")
+    await store._run(
+        "UPDATE payment_orders SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?",
+        order["id"],
+    )
+
+    orders = await store.list_payment_orders(user["id"])
+
+    assert orders[0]["status"] == "expired"
 
 
 async def test_provider_order_resolves_internal_order_without_user_input(store):

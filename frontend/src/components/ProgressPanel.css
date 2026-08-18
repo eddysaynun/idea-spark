@@ -9,7 +9,4 @@
 .pipeline li.done { color: var(--mint); }
 .pipeline li.active svg { animation: spin 1s linear infinite; }
 .pipeline > p { margin: 13px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.pipeline details { margin-top: 12px; color: var(--muted); font-size: 10px; }
-.pipeline summary { cursor: pointer; }
-.pipeline pre { max-height: 150px; margin: 8px 0 0; padding: 10px; overflow: auto; border-radius: 8px; color: #d8d3df; background: var(--ink); white-space: pre-wrap; font: 10px/1.55 var(--font-mono); }
 @keyframes spin { to { transform: rotate(360deg); } }

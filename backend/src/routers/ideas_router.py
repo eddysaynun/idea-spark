@@ -66,7 +66,7 @@ async def generate_detail(
         idea_payload = project["ideas"][body.idea_index]
         idea = AgentIdeaItem(**idea_payload)
         plan = await request.app.state.idea_service.generate_detail_for_idea(
-            idea, selected_model
+            idea, selected_model, body.session_id
         )
         await request.app.state.account_store.save_plan(
             user["id"], body.session_id, body.idea_index, plan

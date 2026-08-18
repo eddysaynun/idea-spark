@@ -44,12 +44,16 @@ export default {
     }
 
     const headers = new Headers(request.headers);
+    headers.delete('authorization');
     headers.delete('host');
     headers.delete('cf-connecting-ip');
     headers.delete('cf-ipcountry');
     headers.delete('cf-ray');
     headers.delete('x-forwarded-proto');
     headers.delete('x-real-ip');
+    if (env.UPSTREAM_API_KEY) {
+      headers.set('authorization', `Bearer ${env.UPSTREAM_API_KEY}`);
+    }
 
     const upstreamUrl = `${UPSTREAM_ORIGIN}${url.pathname}${url.search}`;
     try {

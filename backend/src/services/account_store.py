@@ -232,9 +232,10 @@ class AccountStore:
     async def list_payment_orders(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         return await self._all(
             "SELECT id, package_id, package_name, idea_amount, detail_amount, amount_fen, currency, "
-            "channel, status, pay_url, expires_at, paid_at, fulfilled_at, refunded_at, created_at, updated_at "
+            "channel, CASE WHEN status = 'pending' AND expires_at <= ? THEN 'expired' ELSE status END AS status, "
+            "pay_url, expires_at, paid_at, fulfilled_at, refunded_at, created_at, updated_at "
             "FROM payment_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-            user_id, min(max(limit, 1), 100),
+            iso(utc_now()), user_id, min(max(limit, 1), 100),
         )
 
     async def payment_order_id_for_provider(self, channel: str, provider_order_id: str) -> str:
@@ -331,16 +332,18 @@ class AccountStore:
         if after < minimum:
             raise ValueError("Quota limit cannot be lower than used plus reserved")
         now = iso(utc_now())
-        await self._run(
-            f"UPDATE users SET {resource}_limit = ?, updated_at = ? WHERE id = ?",
-            after, now, user_id,
-        )
-        await self._run(
-            "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, reserved_before, reserved_after, reason, created_at) "
-            "VALUES(?, ?, ?, 'adjust_limit', ?, ?, ?, ?, ?, ?, ?)",
-            str(uuid.uuid4()), user_id, resource, delta, before, after,
-            user[f"{resource}_reserved"], user[f"{resource}_reserved"], reason, now,
-        )
+        await self._batch([
+            self.db.prepare(
+                f"UPDATE users SET {resource}_limit = ?, updated_at = ? WHERE id = ?"
+            ).bind(after, now, user_id),
+            self.db.prepare(
+                "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, reserved_before, reserved_after, reason, created_at) "
+                "VALUES(?, ?, ?, 'adjust_limit', ?, ?, ?, ?, ?, ?, ?)"
+            ).bind(
+                str(uuid.uuid4()), user_id, resource, delta, before, after,
+                user[f"{resource}_reserved"], user[f"{resource}_reserved"], reason, now,
+            ),
+        ])
         return (await self.find_users(user_id, 1))[0]
 
     async def clear_reserved_quota(self, user_id: str, resource: str, reason: str) -> Dict[str, Any]:
@@ -351,15 +354,19 @@ class AccountStore:
             raise ValueError("User not found")
         before = int(user[f"{resource}_reserved"])
         now = iso(utc_now())
-        await self._run(
-            f"UPDATE users SET {resource}_reserved = 0, updated_at = ? WHERE id = ?", now, user_id
-        )
-        await self._run(
-            "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, reserved_before, reserved_after, reason, created_at) "
-            "VALUES(?, ?, ?, 'clear_reserved', 0, ?, ?, ?, 0, ?, ?)",
-            str(uuid.uuid4()), user_id, resource, user[f"{resource}_limit"],
-            user[f"{resource}_limit"], before, reason, now,
-        )
+        await self._batch([
+            self.db.prepare(
+                "UPDATE quota_reservations SET outcome = 'refunded', updated_at = ? "
+                "WHERE user_id = ? AND resource = ? AND outcome = 'reserved'"
+            ).bind(now, user_id, resource),
+            self.db.prepare(
+                "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, reserved_before, reserved_after, reason, created_at) "
+                "VALUES(?, ?, ?, 'clear_reserved', 0, ?, ?, ?, 0, ?, ?)"
+            ).bind(
+                str(uuid.uuid4()), user_id, resource, user[f"{resource}_limit"],
+                user[f"{resource}_limit"], before, reason, now,
+            ),
+        ])
         return (await self.find_users(user_id, 1))[0]
 
     async def quota_audit(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -467,53 +474,50 @@ class AccountStore:
         )
         return await self.get_project(user_id, project["id"])
 
-    async def record_usage(self, user_id: str, project_id: str, reservation_key: str, resource: str, amount: int, outcome: str) -> None:
-        await self._run(
-            "INSERT OR IGNORE INTO usage_events(id, user_id, project_id, reservation_key, resource, amount, outcome, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
-            str(uuid.uuid4()), user_id, project_id, reservation_key, resource, amount, outcome, iso(utc_now()),
-        )
-
     async def reserve_quota(self, user_id: str, reservation_key: str, resource: str, amount: int) -> str:
         if resource not in {"idea", "detail"} or amount < 1:
             raise ValueError("Invalid quota reservation")
-        prior = await self._first(
-            "SELECT outcome FROM usage_events WHERE user_id = ? AND reservation_key = ? AND resource = ? ORDER BY created_at DESC LIMIT 1",
-            user_id, reservation_key, resource,
-        )
-        if prior:
-            return "duplicate"
-        inserted = await self._run(
-            "INSERT OR IGNORE INTO usage_events(id, user_id, project_id, reservation_key, resource, amount, outcome, created_at) VALUES(?, ?, '', ?, ?, ?, 'reserved', ?)",
-            str(uuid.uuid4()), user_id, reservation_key, resource, amount, iso(utc_now()),
-        )
-        if not self._changed(inserted):
+        now = iso(utc_now())
+        try:
+            await self._run(
+                "INSERT INTO quota_reservations(user_id, reservation_key, resource, project_id, amount, outcome, created_at, updated_at) "
+                "VALUES(?, ?, ?, '', ?, 'reserved', ?, ?)",
+                user_id, reservation_key, resource, amount, now, now,
+            )
+        except Exception:
             prior = await self._first(
-                "SELECT outcome FROM usage_events WHERE user_id = ? AND reservation_key = ? AND resource = ? ORDER BY created_at DESC LIMIT 1",
+                "SELECT outcome FROM quota_reservations WHERE user_id = ? AND reservation_key = ? AND resource = ?",
                 user_id, reservation_key, resource,
             )
-            return "duplicate" if prior else "denied"
-        result = await self._run(
-            f"UPDATE users SET {resource}_reserved = {resource}_reserved + ? WHERE id = ? AND {resource}_used + {resource}_reserved + ? <= {resource}_limit",
-            amount, user_id, amount,
-        )
-        if not self._changed(result):
-            await self.record_usage(user_id, "", reservation_key, resource, amount, "refunded")
-            return "denied"
+            if prior:
+                return "duplicate"
+            user = await self._first(
+                f"SELECT {resource}_limit AS quota_limit, {resource}_used AS used, "
+                f"{resource}_reserved AS reserved FROM users WHERE id = ?",
+                user_id,
+            )
+            if user and user["used"] + user["reserved"] + amount > user["quota_limit"]:
+                return "denied"
+            raise
         return "reserved"
 
     async def settle_quota(self, user_id: str, project_id: str, reservation_key: str, resource: str, amount: int, success: bool) -> None:
         outcome = "committed" if success else "refunded"
-        inserted = await self._run(
-            "INSERT OR IGNORE INTO usage_events(id, user_id, project_id, reservation_key, resource, amount, outcome, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
-            str(uuid.uuid4()), user_id, project_id, reservation_key, resource, amount, outcome, iso(utc_now()),
+        result = await self._run(
+            "UPDATE quota_reservations SET project_id = ?, outcome = ?, updated_at = ? "
+            "WHERE user_id = ? AND reservation_key = ? AND resource = ? AND amount = ? AND outcome = 'reserved'",
+            project_id, outcome, iso(utc_now()), user_id, reservation_key, resource, amount,
         )
-        if not self._changed(inserted):
+        if self._changed(result):
             return
-        used_delta = amount if success else 0
-        await self._run(
-            f"UPDATE users SET {resource}_reserved = MAX(0, {resource}_reserved - ?), {resource}_used = {resource}_used + ? WHERE id = ?",
-            amount, used_delta, user_id,
+        reservation = await self._first(
+            "SELECT amount, outcome FROM quota_reservations "
+            "WHERE user_id = ? AND reservation_key = ? AND resource = ?",
+            user_id, reservation_key, resource,
         )
+        if reservation and reservation["amount"] == amount and reservation["outcome"] == outcome:
+            return
+        raise ValueError("Quota reservation not found or already settled differently")
 
     @staticmethod
     def public_user(user: Dict[str, Any]) -> Dict[str, Any]:

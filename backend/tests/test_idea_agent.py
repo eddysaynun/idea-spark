@@ -48,7 +48,7 @@ def test_wrong_idea_count_is_rejected():
 
 
 class ShortDetailModel:
-    async def generate(self, _prompt, _model=None):
+    async def generate(self, _prompt, _model=None, **_options):
         return "内容过短"
 
 
@@ -57,3 +57,22 @@ async def test_detail_failure_does_not_return_fake_plan():
 
     with pytest.raises(RuntimeError, match="生成失败"):
         await agent.generate_detail(IdeaItem(**idea_payload()))
+
+
+class TracedDetailModel:
+    def __init__(self):
+        self.options = None
+
+    async def generate(self, _prompt, _model=None, **options):
+        self.options = options
+        return "# 方案\n\n" + "可执行内容。" * 40
+
+
+async def test_detail_generation_propagates_project_trace():
+    model = TracedDetailModel()
+    agent = DetailGenerationAgent(model, "selected-model", trace_id="project-detail")
+
+    await agent.generate_detail(IdeaItem(**idea_payload()))
+
+    assert model.options["trace_id"] == "project-detail"
+    assert model.options["stage"] == "detail"

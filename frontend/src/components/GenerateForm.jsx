@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowRight, Square, WandSparkles } from 'lucide-react';
 
 import { useApp } from '../context/app-context';
+import { clampGenerationCount } from '../utils/quota';
 import './GenerateForm.css';
 
 const categories = [
@@ -23,6 +24,10 @@ const GenerateForm = () => {
   const [count, setCount] = useState(Math.min(5, remainingIdeas));
   const [category, setCategory] = useState('general');
   const [model, setModel] = useState('');
+
+  useEffect(() => {
+    setCount((current) => clampGenerationCount(current, remainingIdeas));
+  }, [remainingIdeas]);
 
   const selectedModel = model || availableModels[0] || config.model || '';
 
@@ -72,7 +77,7 @@ const GenerateForm = () => {
             min={1}
             max={remainingIdeas}
             value={count}
-            onChange={(event) => setCount(Math.max(1, Math.min(remainingIdeas, parseInt(event.target.value) || 1)))}
+            onChange={(event) => setCount(clampGenerationCount(event.target.value, remainingIdeas))}
             disabled={isGenerating}
           />
         </label>

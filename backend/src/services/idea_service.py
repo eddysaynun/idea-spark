@@ -50,7 +50,9 @@ class IdeaService:
         session = self.create_session(direction, count, category, selected_model)
         try:
             ideas = []
-            async for event in IdeaPipeline(self.model_client, selected_model).run_events(direction, count, category):
+            async for event in IdeaPipeline(
+                self.model_client, selected_model, session["id"]
+            ).run_events(direction, count, category):
                 if event["type"] == "idea":
                     ideas.append(IdeaItem(**event["data"]))
             return self.complete_session(session["id"], ideas)
@@ -69,15 +71,21 @@ class IdeaService:
 
         idea = IdeaItem(**session["ideas"][idea_index])
         selected_model = self.model_client.validate_model(model or session.get("model", ""))
-        plan = await DetailGenerationAgent(self.model_client, selected_model).generate_detail(idea)
+        plan = await DetailGenerationAgent(
+            self.model_client, selected_model, session_id
+        ).generate_detail(idea)
         session["detailed_plans"][cache_key] = plan
         session["updated_at"] = datetime.now().isoformat()
         return plan
 
-    async def generate_detail_for_idea(self, idea: IdeaItem, model: str = "") -> str:
+    async def generate_detail_for_idea(
+        self, idea: IdeaItem, model: str = "", trace_id: str = ""
+    ) -> str:
         """从已校验的 Idea 快照生成详情，不依赖进程内会话。"""
         selected_model = self.model_client.validate_model(model)
-        return await DetailGenerationAgent(self.model_client, selected_model).generate_detail(idea)
+        return await DetailGenerationAgent(
+            self.model_client, selected_model, trace_id
+        ).generate_detail(idea)
 
     @classmethod
     def get_session(cls, session_id: str) -> Dict[str, Any]:

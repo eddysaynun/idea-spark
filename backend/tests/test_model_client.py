@@ -1,3 +1,6 @@
+import json
+import logging
+
 import pytest
 
 import services.models.model_client as model_client_module
@@ -117,6 +120,53 @@ async def test_qwen35_can_enable_thinking_per_stage():
     request_body = __import__("json").loads(binding.calls[0][1]["body"])
     assert request_body["chat_template_kwargs"] == {"enable_thinking": True}
     assert request_body["max_tokens"] == 32768
+
+
+@pytest.mark.asyncio
+async def test_model_call_logs_trace_stage_duration_and_output_size(caplog):
+    response = FakeResponse({"choices": [{"message": {"content": "measured output"}}]})
+    client = ModelClient(
+        ModelConfig(base_url="https://qwen-api.example/v1", model="qwen35_27b"),
+        service_binding=FakeBinding(response),
+    )
+
+    with caplog.at_level(logging.INFO):
+        await client.generate(
+            "criticize", thinking=True, trace_id="project-123", stage="critic"
+        )
+
+    event = next(json.loads(record.message) for record in caplog.records if '"event": "model_call"' in record.message)
+    assert event["trace_id"] == "project-123"
+    assert event["stage"] == "critic"
+    assert event["model"] == "qwen35_27b"
+    assert event["thinking"] is True
+    assert event["success"] is True
+    assert event["output_chars"] == len("measured output")
+    assert event["duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_stream_model_call_logs_final_content_size(caplog):
+    binding = FakeBinding(FakeResponse(
+        'data: {"choices":[{"delta":{"content":"答案"}}]}\n\n'
+        'data: [DONE]\n'
+    ))
+    client = ModelClient(
+        ModelConfig(base_url="https://qwen-api.example/v1", model="qwen35_27b"),
+        service_binding=binding,
+    )
+
+    with caplog.at_level(logging.INFO):
+        chunks = [chunk async for chunk in client.generate_stream(
+            "explore", trace_id="project-456", stage="explorer"
+        )]
+
+    event = next(json.loads(record.message) for record in caplog.records if '"event": "model_call"' in record.message)
+    assert chunks == [{"type": "content", "data": "答案"}]
+    assert event["trace_id"] == "project-456"
+    assert event["stage"] == "explorer"
+    assert event["stream"] is True
+    assert event["output_chars"] == len("答案")
 
 
 @pytest.mark.asyncio

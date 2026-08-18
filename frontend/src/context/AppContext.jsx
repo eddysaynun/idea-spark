@@ -9,8 +9,6 @@ const emptyProgress = {
   percent: 0,
   step: '',
   message: '',
-  thinking_preview: '',
-  content_preview: '',
 };
 
 export const AppProvider = ({ children }) => {
@@ -145,8 +143,6 @@ export const AppProvider = ({ children }) => {
     abortRef.current = controller;
     const collectedIdeas = [];
     let sessionId = '';
-    let reasoning = '';
-    let content = '';
     let completed = false;
 
     try {
@@ -176,14 +172,6 @@ export const AppProvider = ({ children }) => {
               step: event.data.step,
               message: event.data.message,
             }));
-            break;
-          case 'reasoning':
-            reasoning = (reasoning + event.data).slice(-4000);
-            setProgress((previous) => ({ ...previous, thinking_preview: reasoning }));
-            break;
-          case 'text':
-            content = (content + event.data).slice(-4000);
-            setProgress((previous) => ({ ...previous, content_preview: content }));
             break;
           case 'idea':
             collectedIdeas.push(event.data);

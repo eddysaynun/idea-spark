@@ -28,12 +28,6 @@ const ProgressPanel = ({ progress }) => (
       })}
     </ol>
     <p>{progress.message}</p>
-    {(progress.thinking_preview || progress.content_preview) && (
-      <details>
-        <summary>查看模型实时输出</summary>
-        <pre>{progress.thinking_preview || progress.content_preview}</pre>
-      </details>
-    )}
   </div>
 );
 

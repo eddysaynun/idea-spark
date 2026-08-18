@@ -3,6 +3,7 @@ import json
 import pytest
 
 from services.agents.idea_agent import IdeaItem
+from services.agents.idea_pipeline import IdeaPipeline
 from services.idea_service import IdeaService
 
 
@@ -10,6 +11,7 @@ class FakeModelClient:
     def __init__(self, repair_editor=False):
         self.generate_calls = 0
         self.repair_editor = repair_editor
+        self.call_options = []
 
     config = type("Config", (), {"model": "test-model"})()
 
@@ -19,6 +21,7 @@ class FakeModelClient:
         return model or self.config.model
 
     async def generate_stream(self, _prompt, _model=None, **_options):
+        self.call_options.append(_options)
         payload = [
             {
                 "name": f"Idea {index}",
@@ -40,6 +43,7 @@ class FakeModelClient:
         yield {"type": "content", "data": json.dumps(payload)}
 
     async def generate(self, _prompt, _model=None, **_options):
+        self.call_options.append(_options)
         self.generate_calls += 1
         if self.generate_calls == 1:
             return json.dumps([
@@ -100,6 +104,10 @@ async def test_generation_creates_retrievable_session():
     assert IdeaService.get_session(session["id"])["direction"] == "开发者验证工具"
     assert session["model"] == "test-model"
     assert model_client.generate_calls == 2
+    assert {options["trace_id"] for options in model_client.call_options} == {session["id"]}
+    assert {options["stage"] for options in model_client.call_options} == {
+        "explorer", "critic", "editor",
+    }
 
 
 async def test_pipeline_repairs_one_invalid_editor_response():
@@ -110,6 +118,15 @@ async def test_pipeline_repairs_one_invalid_editor_response():
 
     assert len(session["ideas"]) == 3
     assert model_client.generate_calls == 3
+
+
+async def test_pipeline_reports_real_stages_without_buffered_token_replay():
+    events = [event async for event in IdeaPipeline(
+        FakeModelClient(), "test-model", "project-stream"
+    ).run_events("开发者验证工具", 3, "dev-tools")]
+
+    assert not {"text", "reasoning"}.intersection(event["type"] for event in events)
+    assert "progress" in {event["type"] for event in events}
 
 
 def test_session_delete_reports_missing_ids():
