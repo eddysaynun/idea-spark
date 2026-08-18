@@ -73,3 +73,42 @@ async def test_cached_detail_does_not_consume_quota():
 
     assert response.detailed_plan == "already generated"
     assert store.reserve_calls == 0
+
+
+class DetailStore:
+    async def get_project(self, _user_id, _project_id):
+        return {"ideas": [idea_payload()], "detailed_plans": {}, "model": "model"}
+
+    async def reserve_quota(self, *_args):
+        return "reserved"
+
+    async def save_plan(self, *_args):
+        return None
+
+    async def settle_quota(self, *_args):
+        return None
+
+
+class DetailModel:
+    def validate_model(self, model):
+        return model
+
+    async def generate(self, _prompt, _model=None, **_options):
+        return "# 落地方案\n\n" + "可执行内容。" * 40
+
+
+async def test_detail_route_uses_model_client_without_legacy_idea_service():
+    state = type("State", (), {
+        "account_store": DetailStore(),
+        "model_client": DetailModel(),
+    })()
+    request = Request({"type": "http", "app": type("App", (), {"state": state})()})
+
+    response = await generate_detail(
+        request,
+        DetailRequest(session_id="project-1", idea_index=0),
+        user={"id": "user-1"},
+        idempotency_key="detail-request-key-0002",
+    )
+
+    assert response.detailed_plan.startswith("# 落地方案")

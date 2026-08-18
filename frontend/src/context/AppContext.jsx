@@ -12,11 +12,6 @@ const emptyProgress = {
 };
 
 export const AppProvider = ({ children }) => {
-  const [config, setConfig] = useState({
-    base_url: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini',
-    temperature: 0.7,
-  });
   const [availableModels, setAvailableModels] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(emptyProgress);
@@ -68,34 +63,6 @@ export const AppProvider = ({ children }) => {
       localStorage.setItem('idea_spark_session', JSON.stringify(session));
     } catch (error) {
       logger.warn('Unable to persist session', error);
-    }
-  }, []);
-
-  const loadConfig = useCallback(async (adminToken = '') => {
-    try {
-      const data = await configAPI.getConfig(adminToken);
-      if (data.success) {
-        setConfig(data.config);
-        setAvailableModels(data.config.available_models || []);
-      }
-      return data.success;
-    } catch (error) {
-      logger.error('Failed to load config', error.message);
-      return false;
-    }
-  }, []);
-
-  const saveConfig = useCallback(async (nextConfig, adminToken = '') => {
-    try {
-      const data = await configAPI.updateConfig(nextConfig, adminToken);
-      if (data.success) {
-        setConfig(data.config);
-        setAvailableModels(data.config.available_models || []);
-      }
-      return data.success;
-    } catch (error) {
-      logger.error('Failed to save config', error.message);
-      return false;
     }
   }, []);
 
@@ -265,7 +232,7 @@ export const AppProvider = ({ children }) => {
 
   const value = {
     authLoading, user, refreshUser, logout, loginUrl: authAPI.loginUrl, importLocalSession,
-    config, loadConfig, saveConfig, availableModels, loadModels,
+    availableModels, loadModels,
     isGenerating, progress, generationError, generateIdeas, cancelGeneration,
     currentSession, currentIdeaIndex, ideas, sessions,
     selectIdea, generateDetail, loadSessions, loadSession, deleteSession,

@@ -4,7 +4,7 @@
 
 - `app.py`：应用生命周期、CORS、路由注册和模型客户端关闭。
 - `routers/`：HTTP/SSE 参数、状态码和安全响应，不放业务编排。
-- `services/idea_service.py`：会话、详情缓存和生成生命周期。
+- `services/account_store.py`：D1 用户、额度、项目、详情和支付持久化。
 - `services/agents/idea_pipeline.py`：Explorer → Critic → Editor 三阶段生成。
 - `services/agents/idea_agent.py`：严格 JSON 输出解析和详细方案 Agent。
 - `services/models/model_client.py`：用户自带 OpenAI-compatible 服务适配与模型选择。
@@ -12,12 +12,11 @@
 
 ## 生成流程
 
-`GET /api/generate-stream` 创建 session，并通过 SSE 依次发送：
+`POST /api/generate-stream` 创建项目，并通过 SSE 依次发送：
 
 ```text
 start
 progress: 机会探索
-reasoning / text
 progress: 批判评估
 progress: 结构化定稿
 idea × N
@@ -25,7 +24,7 @@ progress: 完成
 complete
 ```
 
-任一阶段失败时，未完成 session 会被删除并发送 `error`。结构无效时允许一次只修 JSON 的受控修复；第二次仍无效则显式失败，绝不生成备用业务数据。
+任一阶段失败时，未完成项目会被删除、额度会退还并发送 `error`。结构无效时允许一次只修 JSON 的受控修复；第二次仍无效则显式失败，绝不生成备用业务数据。
 
 最终 Idea 字段除产品信息外，还包括：
 
@@ -42,7 +41,7 @@ complete
 | GET/POST | `/api/config` | 受管理员保护地读取/临时应用模型配置；仅进程内生效且不返回密钥原文 |
 | GET | `/api/detect-models` | 受管理员保护地探测 Custom API 模型 |
 | POST | `/api/generate` | 非流式三阶段生成 |
-| GET | `/api/generate-stream` | SSE 三阶段生成 |
+| POST | `/api/generate-stream` | SSE 三阶段生成 |
 | POST | `/api/detail` | 生成并缓存详细方案 |
 | GET | `/api/sessions` | 会话列表 |
 | GET/DELETE | `/api/sessions/{id}` | 会话详情/删除 |
@@ -59,6 +58,6 @@ uv run python -m compileall -q .
 
 ## 当前边界
 
-- session 使用单进程内存，重启后清空。
+- 用户、额度、项目和详情使用 D1 持久化并按当前用户隔离。
 - 常规测试使用 fake model，不访问真实外部服务。
 - 真实外部模型冒烟测试会传输用户输入，必须在明确授权后执行。

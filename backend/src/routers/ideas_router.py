@@ -10,7 +10,7 @@ from schemas.models import (
     SessionDetailResponse,
     SessionListResponse,
 )
-from services.agents.idea_agent import IdeaItem as AgentIdeaItem
+from services.agents.idea_agent import DetailGenerationAgent, IdeaItem as AgentIdeaItem
 from services.auth import current_user
 
 logger = logging.getLogger(__name__)
@@ -65,9 +65,9 @@ async def generate_detail(
     try:
         idea_payload = project["ideas"][body.idea_index]
         idea = AgentIdeaItem(**idea_payload)
-        plan = await request.app.state.idea_service.generate_detail_for_idea(
-            idea, selected_model, body.session_id
-        )
+        plan = await DetailGenerationAgent(
+            request.app.state.model_client, selected_model, body.session_id
+        ).generate_detail(idea)
         await request.app.state.account_store.save_plan(
             user["id"], body.session_id, body.idea_index, plan
         )

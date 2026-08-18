@@ -2,9 +2,10 @@ import json
 import logging
 
 import pytest
+from tenacity import wait_none
 
 import services.models.model_client as model_client_module
-from services.models.model_client import ModelClient, ModelConfig
+from services.models.model_client import ModelClient, ModelConfig, TransientModelError
 
 
 def test_extracts_qwen_reasoning_from_delta():
@@ -36,10 +37,9 @@ def test_workbench_only_accepts_configured_or_detected_models():
 
 
 class FakeResponse:
-    status = 200
-
-    def __init__(self, data):
+    def __init__(self, data, status=200):
         self.data = data
+        self.status = status
 
     async def json(self):
         return self.data
@@ -184,6 +184,28 @@ async def test_local_fallback_uses_standard_library_transport(monkeypatch):
     assert calls[0][0] == "https://model.example/v1/chat/completions"
     assert calls[0][1]["method"] == "POST"
     assert calls[0][1]["headers"]["Authorization"] == "Bearer local-key"
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_model_4xx_is_attempted_once():
+    binding = FakeBinding(FakeResponse({"error": "invalid model"}, status=400))
+    client = ModelClient(ModelConfig(model="bad-model"), service_binding=binding)
+
+    with pytest.raises(RuntimeError, match="400"):
+        await client.generate("hello")
+
+    assert len(binding.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_exhausted_transient_failure_raises_runtime_error_not_retry_wrapper():
+    binding = FakeBinding(FakeResponse({"error": "unavailable"}, status=503))
+    client = ModelClient(ModelConfig(model="model"), service_binding=binding)
+
+    with pytest.raises(TransientModelError, match="503"):
+        await client.generate.retry_with(wait=wait_none())(client, "hello")
+
+    assert len(binding.calls) == 3
 
 
 @pytest.mark.asyncio

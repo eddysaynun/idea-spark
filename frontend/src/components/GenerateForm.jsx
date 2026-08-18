@@ -16,7 +16,7 @@ const categories = [
 const examples = ['独立开发者验证需求', '本地优先的团队知识工具', 'AI 辅助售后工作流'];
 
 const GenerateForm = () => {
-  const { availableModels, config, isGenerating, generateIdeas, cancelGeneration, user } = useApp();
+  const { availableModels, isGenerating, generateIdeas, cancelGeneration, user } = useApp();
   const [direction, setDirection] = useState('');
   const remainingIdeas = user
     ? Math.max(0, user.quota.idea.limit - user.quota.idea.used - user.quota.idea.reserved)
@@ -29,7 +29,7 @@ const GenerateForm = () => {
     setCount((current) => clampGenerationCount(current, remainingIdeas));
   }, [remainingIdeas]);
 
-  const selectedModel = model || availableModels[0] || config.model || '';
+  const selectedModel = model || availableModels[0] || '';
 
   const submit = (event) => {
     event.preventDefault();

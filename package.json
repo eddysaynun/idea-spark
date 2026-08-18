@@ -9,7 +9,7 @@
     "dev": "./start.sh",
     "check": "./scripts/check.sh",
     "build": "npm --prefix frontend ci && npm --prefix frontend run build",
-    "deploy": "npm run build && cd backend && uv run pywrangler deploy",
+    "deploy": "npm run build && cd backend && npx wrangler d1 migrations apply idea-spark-production --remote && uv run pywrangler deploy",
     "preview": "npm run build && cd backend && uv run pywrangler dev",
     "test:model-proxy": "node --test model-proxy/src/index.test.js",
     "test:payment-gateway": "node --test payment-gateway/src/index.test.js",

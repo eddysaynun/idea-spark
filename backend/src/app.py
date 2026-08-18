@@ -20,10 +20,6 @@ from routers.billing_router import router as billing_router
 from utils.logger import setup_logging
 logger = logging.getLogger(__name__)
 
-# 全局状态
-sessions = {}
-
-
 def load_model_config_from_env() -> ModelConfig:
     """从进程环境初始化模型配置，不读取或写入本地配置文件。"""
     config = ModelConfig()
@@ -84,7 +80,7 @@ def load_model_config_from_bindings(env) -> ModelConfig:
 
 async def initialize_application(app: FastAPI, env=None) -> None:
     """幂等初始化本地 ASGI 与 Cloudflare Worker 共用的应用状态。"""
-    if getattr(app.state, "idea_service", None) is not None:
+    if getattr(app.state, "model_client", None) is not None:
         return
     config = load_model_config_from_bindings(env) if env is not None else load_model_config_from_env()
     app.state.model_config = config
@@ -128,9 +124,6 @@ async def initialize_application(app: FastAPI, env=None) -> None:
     model_proxy = getattr(env, "MODEL_PROXY", None) if env is not None else None
     app.state.model_client = ModelClient(config, service_binding=model_proxy)
 
-    from services.idea_service import IdeaService
-
-    app.state.idea_service = IdeaService(app.state.model_client)
     database = getattr(env, "DB", None) if env is not None else None
     if database is not None:
         from services.account_store import AccountStore
@@ -139,7 +132,7 @@ async def initialize_application(app: FastAPI, env=None) -> None:
         app.state.account_store = AccountStore(database, idea_limit, detail_limit)
     else:
         app.state.account_store = None
-    logger.info("IdeaService initialized with model %s", config.model)
+    logger.info("Model client initialized with model %s", config.model)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -150,14 +143,13 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Idea Spark Server starting...")
     
     # Python Worker 入口会先注入绑定；本地 ASGI 则从环境变量初始化。
-    if getattr(app.state, "idea_service", None) is None:
+    if getattr(app.state, "model_client", None) is None:
         await initialize_application(app)
     
     yield
 
     if os.environ.get("IDEA_SPARK_RUNTIME") != "cloudflare":
         await app.state.model_client.close()
-        app.state.idea_service = None
         app.state.model_client = None
     
     logger.info("👋 Idea Spark Server shutting down...")

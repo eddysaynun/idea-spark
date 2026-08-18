@@ -5,10 +5,14 @@ import logging
 import time
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from utils.http_client import request_text
 
 logger = logging.getLogger(__name__)
+
+
+class TransientModelError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -44,7 +48,9 @@ class ModelClient:
     
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(TransientModelError),
+        reraise=True,
     )
     async def generate(
         self,
@@ -275,14 +281,17 @@ class ModelClient:
             return response
         except Exception:
             logger.exception("❌ Model proxy Service Binding request failed")
-            raise
+            raise TransientModelError("Model proxy request failed") from None
 
     @staticmethod
     def _parse_completion_response(status: int, text_data: str) -> str:
         logger.info("📡 Response status: %s", status)
         if status != 200:
             logger.error("❌ Compatible API error: %s - %s", status, text_data[:500])
-            raise RuntimeError(f"Compatible API error: {status} - {text_data[:200]}")
+            error = f"Compatible API error: {status} - {text_data[:200]}"
+            if status == 429 or status >= 500:
+                raise TransientModelError(error)
+            raise RuntimeError(error)
         if not text_data or not text_data.strip():
             raise RuntimeError("Empty response from API")
         try:
