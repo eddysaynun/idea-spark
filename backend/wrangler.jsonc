@@ -79,7 +79,7 @@
     }
   ],
   "triggers": {
-    "crons": ["15 18 * * *"]
+    "crons": ["*/15 * * * *"]
   },
   "assets": {
     "directory": "../frontend/dist",

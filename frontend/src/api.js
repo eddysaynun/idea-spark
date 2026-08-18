@@ -42,6 +42,9 @@ export const productAPI = {
 };
 
 export const adminAPI = {
+  metrics: async (token, days = 30) => (await apiClient.get('/admin/metrics', {
+    params: { days }, headers: { 'X-Admin-Token': token },
+  })).data,
   users: async (token, query = '') => (await apiClient.get('/admin/users', {
     params: { q: query }, headers: { 'X-Admin-Token': token },
   })).data,

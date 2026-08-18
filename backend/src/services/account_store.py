@@ -320,6 +320,22 @@ class AccountStore:
             raise ValueError("Payment order not found")
         return order
 
+    async def expire_payment_order(self, order_id: str) -> Dict[str, Any]:
+        await self._run(
+            "UPDATE payment_orders SET status = 'expired', updated_at = ? "
+            "WHERE id = ? AND status = 'pending'",
+            iso(utc_now()), order_id,
+        )
+        return await self.admin_payment_order(order_id)
+
+    async def payment_reconciliation_candidates(self, limit: int = 20) -> List[Dict[str, Any]]:
+        return await self._all(
+            "SELECT * FROM payment_orders WHERE provider_order_id <> '' AND "
+            "(refund_state = 'pending' OR (status = 'pending' AND expires_at <= ?)) "
+            "ORDER BY updated_at LIMIT ?",
+            iso(utc_now()), min(max(limit, 1), 100),
+        )
+
     async def prepare_payment_refund(self, order_id: str) -> Dict[str, Any]:
         order = await self.admin_payment_order(order_id)
         if order["status"] == "refunded" and order["refund_state"] == "refunded":
@@ -516,6 +532,55 @@ class AccountStore:
             "ORDER BY created_at DESC LIMIT ?",
             user_id, min(max(limit, 1), 100),
         )
+
+    async def admin_metrics(self, days: int = 30) -> Dict[str, Any]:
+        days = min(max(int(days), 1), 90)
+        cutoff = iso(utc_now() - timedelta(days=days))
+        users = await self._first(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS new, "
+            "SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active FROM users",
+            cutoff,
+        )
+        generation = await self._first(
+            "SELECT SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) AS complete, "
+            "SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed "
+            "FROM projects WHERE created_at >= ?",
+            cutoff,
+        )
+        details = await self._first(
+            "SELECT COUNT(*) AS total FROM detailed_plans WHERE created_at >= ?", cutoff
+        )
+        feedback = await self._first(
+            "SELECT SUM(CASE WHEN action = 'no_value' THEN 1 ELSE 0 END) AS no_value "
+            "FROM product_events WHERE created_at >= ?",
+            cutoff,
+        )
+        payments = await self._first(
+            "SELECT SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid, "
+            "SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded, "
+            "SUM(CASE WHEN status = 'paid' THEN amount_fen ELSE 0 END) AS revenue_fen "
+            "FROM payment_orders WHERE created_at >= ?",
+            cutoff,
+        )
+        quota = await self._first(
+            "SELECT COUNT(*) AS stuck_reservations FROM quota_reservations "
+            "WHERE outcome = 'reserved' AND created_at < ?",
+            iso(utc_now() - timedelta(minutes=30)),
+        )
+        integer = lambda value: int(value or 0)
+        return {
+            "window_days": days,
+            "users": {key: integer(users.get(key)) for key in ("total", "new", "active")},
+            "generation": {
+                "complete": integer(generation.get("complete")),
+                "failed": integer(generation.get("failed")),
+                "details": integer(details.get("total")),
+                "no_value": integer(feedback.get("no_value")),
+            },
+            "payments": {key: integer(payments.get(key)) for key in ("paid", "refunded", "revenue_fen")},
+            "quota": {"stuck_reservations": integer(quota.get("stuck_reservations"))},
+        }
 
     async def create_project(self, user_id: str, direction: str, count: int, category: str, model: str) -> Dict[str, Any]:
         project_id = str(uuid.uuid4())

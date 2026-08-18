@@ -427,3 +427,44 @@ async def test_product_events_are_whitelisted_owned_and_idempotent(store):
         await store.record_product_event(bob["id"], project["id"], 0, "expand", "event-key-0000002")
     with pytest.raises(ValueError, match="Invalid product event"):
         await store.record_product_event(alice["id"], project["id"], 0, "free_text", "event-key-0000003")
+
+
+async def test_admin_metrics_aggregate_only_business_counts(store, monkeypatch):
+    now = datetime(2026, 8, 18, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(account_store_module, "utc_now", lambda: now)
+    user = await create_user(store, "metrics")
+    project = await store.create_project(user["id"], "指标项目", 2, "general", "model")
+    await store.complete_project(user["id"], project["id"], [{"name": "A"}, {"name": "B"}])
+    await store.save_plan(user["id"], project["id"], 0, "plan")
+    await store.record_product_event(user["id"], project["id"], 0, "detail", "metrics-detail-0001")
+    await store.record_product_event(user["id"], project["id"], 1, "no_value", "metrics-no-value-01")
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+    order = await store.create_payment_order(user["id"], package, "alipay")
+    await store.attach_payment_checkout(user["id"], order["id"], "ISmetrics", "https://pay.example.test")
+    await store.fulfill_payment(order["id"], "alipay", "metrics-paid", "TRADE_SUCCESS", "trade", 2900, "digest", True)
+
+    metrics = await store.admin_metrics(30)
+
+    assert metrics["users"] == {"total": 1, "new": 1, "active": 1}
+    assert metrics["generation"] == {"complete": 1, "failed": 0, "details": 1, "no_value": 1}
+    assert metrics["payments"] == {"paid": 1, "refunded": 0, "revenue_fen": 2900}
+    assert metrics["quota"]["stuck_reservations"] == 0
+
+
+async def test_reconciliation_candidates_are_bounded_to_expired_payments_and_pending_refunds(store):
+    user = await create_user(store, "reconciliation")
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+    active = await store.create_payment_order(user["id"], package, "alipay")
+    expired = await store.create_payment_order(user["id"], package, "alipay")
+    refunded = await store.create_payment_order(user["id"], package, "alipay")
+    await store.attach_payment_checkout(user["id"], active["id"], "ISactive", "https://pay.example.test")
+    await store.attach_payment_checkout(user["id"], expired["id"], "ISexpired", "https://pay.example.test")
+    await store.attach_payment_checkout(user["id"], refunded["id"], "ISrefund", "https://pay.example.test")
+    await store._run("UPDATE payment_orders SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?", expired["id"])
+    await store.fulfill_payment(refunded["id"], "alipay", "paid-for-refund", "TRADE_SUCCESS", "trade", 2900, "digest", True)
+    await store.prepare_payment_refund(refunded["id"])
+
+    candidates = await store.payment_reconciliation_candidates(20)
+
+    assert {item["id"] for item in candidates} == {expired["id"], refunded["id"]}
+    assert active["id"] not in {item["id"] for item in candidates}

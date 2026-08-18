@@ -59,6 +59,7 @@ export default function AdminPage() {
   const [events, setEvents] = useState([]);
   const [rechargeRecords, setRechargeRecords] = useState([]);
   const [paymentOrders, setPaymentOrders] = useState([]);
+  const [metrics, setMetrics] = useState(null);
   const [paymentBusy, setPaymentBusy] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -69,9 +70,14 @@ export default function AdminPage() {
     if (!token) return;
     setBusy(true); setError(''); setMessage('');
     try {
-      const data = await adminAPI.users(token, query.trim());
+      const [data, ordersData, metricsData] = await Promise.all([
+        adminAPI.users(token, query.trim()),
+        adminAPI.paymentOrders(token),
+        adminAPI.metrics(token),
+      ]);
       setUsers(data.users);
-      setPaymentOrders((await adminAPI.paymentOrders(token)).orders);
+      setPaymentOrders(ordersData.orders);
+      setMetrics(metricsData.metrics);
       if (selected) setSelected(data.users.find((user) => user.id === selected.id) || null);
     } catch (reason) { setError(errorText(reason)); setUsers([]); }
     finally { setBusy(false); }
@@ -121,6 +127,17 @@ export default function AdminPage() {
     <form className="admin-search" onSubmit={search}><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="按邮箱、GitHub 用户名、显示名或用户 ID 搜索" /><button disabled={!token || busy}>{busy ? <LoaderCircle className="spin" size={16} /> : '查询'}</button></form>
     {message && <p className="admin-message" role="status">{message}</p>}
     {error && <p className="admin-error" role="alert">{error}</p>}
+    {metrics && <section className="admin-metrics" aria-label={`最近 ${metrics.window_days} 天运营快照`}>
+      <div className="admin-metrics-head"><span>最近 {metrics.window_days} 天</span><strong>运营快照</strong></div>
+      <dl>
+        <div><dt>新增用户</dt><dd>{metrics.users.new}</dd><small>{metrics.users.active} 个活跃账户</small></div>
+        <div><dt>完成生成</dt><dd>{metrics.generation.complete}</dd><small>{metrics.generation.failed} 次失败</small></div>
+        <div><dt>详细方案</dt><dd>{metrics.generation.details}</dd><small>已落库方案</small></div>
+        <div><dt>无价值反馈</dt><dd>{metrics.generation.no_value}</dd><small>用户明确反馈</small></div>
+        <div><dt>实收金额</dt><dd>¥{(metrics.payments.revenue_fen / 100).toFixed(2)}</dd><small>{metrics.payments.paid} 笔支付 · {metrics.payments.refunded} 笔退款</small></div>
+        <div className={metrics.quota.stuck_reservations ? 'metric-alert' : ''}><dt>异常预占</dt><dd>{metrics.quota.stuck_reservations}</dd><small>超过 30 分钟</small></div>
+      </dl>
+    </section>}
     {paymentOrders.length > 0 && <section className="payment-admin"><div className="payment-admin-head"><span>支付订单审计</span><strong>{paymentOrders.length}</strong></div>{paymentOrders.map((item) => <article key={item.id}><div><strong>{item.display_name}</strong><span>{item.login}</span></div><p>{item.package_name} · ¥{(item.amount_fen / 100).toFixed(2)}</p><small>{item.channel === 'wechat' ? '微信支付' : '支付宝'} · {item.status}{item.refund_state === 'pending' ? ' · 退款待对账' : ''}</small><code>{item.id}</code><div className="payment-actions"><button onClick={() => paymentAction(item, 'query')} disabled={!!paymentBusy}>{paymentBusy === `query-${item.id}` ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />} 查单</button>{canRefundOrder(item) && <button className="refund" onClick={() => paymentAction(item, 'refund')} disabled={!!paymentBusy}>{paymentBusy === `refund-${item.id}` ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />} 全额退款</button>}</div></article>)}</section>}
     <div className="admin-workspace">
       <aside className="user-results">

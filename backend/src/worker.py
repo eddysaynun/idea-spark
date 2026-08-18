@@ -28,10 +28,12 @@ class Default(WorkerEntrypoint):
 
     async def scheduled(self, controller, env, ctx):
         from routers.account_router import delete_supabase_identity
+        from services.payment_reconciliation import reconcile_payments
 
         await initialize_application(app, self.env)
 
         async def delete_identity(subject):
             await delete_supabase_identity(app.state, subject)
 
+        await reconcile_payments(app.state.account_store, app.state.payment_registry)
         await app.state.account_store.process_due_deletions(delete_identity)

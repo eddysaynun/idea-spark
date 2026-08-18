@@ -1,12 +1,12 @@
 """Audited commercial-account administration endpoints."""
 
-import hashlib
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from routers.config_router import require_config_admin
+from services.payment_reconciliation import query_and_fulfill, refund_prepared
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_config_admin)])
 
@@ -71,26 +71,15 @@ async def payment_orders(
     return {"success": True, "orders": await store(request).admin_payment_orders(status)}
 
 
+@router.get("/metrics")
+async def metrics(request: Request, days: int = Query(30, ge=1, le=90)):
+    return {"success": True, "metrics": await store(request).admin_metrics(days)}
+
+
 @router.post("/payment-orders/{order_id}/query")
 async def query_payment_order(order_id: str, request: Request):
     try:
-        order = await store(request).admin_payment_order(order_id)
-        provider = request.app.state.payment_registry.get(order["channel"])
-        if provider is None:
-            raise ValueError("Payment provider is not configured")
-        result = await provider.query_order(order)
-        if result.provider_order_id != order["provider_order_id"] or result.amount_fen != int(order["amount_fen"]):
-            raise ValueError("Payment query mismatch")
-        if result.status != "paid":
-            return {"success": True, "status": result.status, "order": order}
-        digest = hashlib.sha256(
-            f"{result.provider_order_id}:{result.provider_trade_id}:{result.amount_fen}".encode()
-        ).hexdigest()
-        fulfilled = await store(request).fulfill_payment(
-            order_id, order["channel"], f"query:{result.provider_trade_id}:paid", "TRADE_QUERY",
-            result.provider_trade_id, result.amount_fen, digest, True,
-        )
-        return {"success": True, **fulfilled}
+        return await query_and_fulfill(order_id, store(request), request.app.state.payment_registry)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -101,22 +90,7 @@ async def query_payment_order(order_id: str, request: Request):
 async def refund_payment_order(order_id: str, request: Request):
     try:
         order = await store(request).prepare_payment_refund(order_id)
-        if order.get("status") == "refunded":
-            return {"success": True, "status": "duplicate", "order": order}
-        provider = request.app.state.payment_registry.get(order["channel"])
-        if provider is None:
-            raise ValueError("Payment provider is not configured")
-        result = await provider.refund_order(order, order["refund_request_id"])
-        if (
-            result.provider_order_id != order["provider_order_id"]
-            or result.refund_request_id != order["refund_request_id"]
-            or result.amount_fen != int(order["amount_fen"])
-        ):
-            raise ValueError("Payment refund mismatch")
-        refunded = await store(request).complete_payment_refund(
-            order_id, result.refund_request_id, result.provider_trade_id
-        )
-        return {"success": True, **refunded}
+        return await refund_prepared(order, store(request), request.app.state.payment_registry)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RuntimeError as exc:
