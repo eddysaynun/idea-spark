@@ -75,15 +75,15 @@ UPDATE users SET
 CREATE TRIGGER IF NOT EXISTS quota_reservations_guard_insert
 BEFORE INSERT ON quota_reservations
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1 FROM users
         WHERE id = NEW.user_id
-          AND CASE NEW.resource
+          AND (CASE NEW.resource
               WHEN 'idea' THEN idea_used + idea_reserved + NEW.amount <= idea_limit
               WHEN 'detail' THEN detail_used + detail_reserved + NEW.amount <= detail_limit
               ELSE 0
-          END
-    ) THEN RAISE(ABORT, 'quota exceeded') END;
+          END)
+    ) THEN RAISE(ABORT, 'quota exceeded') END);
 END;
 
 CREATE TRIGGER IF NOT EXISTS quota_reservations_apply_insert
@@ -100,7 +100,7 @@ CREATE TRIGGER IF NOT EXISTS quota_reservations_guard_settlement
 BEFORE UPDATE ON quota_reservations
 WHEN OLD.outcome <> NEW.outcome
 BEGIN
-    SELECT CASE WHEN
+    SELECT (CASE WHEN
         OLD.outcome <> 'reserved'
         OR NEW.outcome NOT IN ('committed', 'refunded')
         OR OLD.user_id <> NEW.user_id
@@ -108,16 +108,16 @@ BEGIN
         OR OLD.resource <> NEW.resource
         OR OLD.amount <> NEW.amount
         OR OLD.created_at <> NEW.created_at
-    THEN RAISE(ABORT, 'invalid quota transition') END;
-    SELECT CASE WHEN NOT EXISTS (
+    THEN RAISE(ABORT, 'invalid quota transition') END);
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1 FROM users
         WHERE id = OLD.user_id
-          AND CASE OLD.resource
+          AND (CASE OLD.resource
               WHEN 'idea' THEN idea_reserved >= OLD.amount
               WHEN 'detail' THEN detail_reserved >= OLD.amount
               ELSE 0
-          END
-    ) THEN RAISE(ABORT, 'quota reservation underflow') END;
+          END)
+    ) THEN RAISE(ABORT, 'quota reservation underflow') END);
 END;
 
 CREATE TRIGGER IF NOT EXISTS quota_reservations_apply_settlement
