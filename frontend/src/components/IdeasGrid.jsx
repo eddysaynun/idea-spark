@@ -1,4 +1,4 @@
-import { ArrowUpRight, CircleAlert, Gauge, Radar, ThumbsDown } from 'lucide-react';
+import { ArrowRight, CircleAlert, Gauge, Radar, ThumbsDown } from 'lucide-react';
 
 import './IdeasGrid.css';
 
@@ -27,9 +27,9 @@ const IdeasGrid = ({ ideas, onOpenIdea, onNoValue }) => (
             <span><Gauge size={15} /> {Number(idea.score || 0).toFixed(1)}</span>
             <span><CircleAlert size={15} /> {idea.risks?.length || 0} 风险</span>
           </span>
-          <ArrowUpRight className="idea-open" size={18} />
+          <span className="idea-open">查看机会 <ArrowRight size={14} /></span>
         </button>
-        <button className="idea-no-value" onClick={() => onNoValue(index)} title="这个候选没有价值" aria-label={`${idea.name}没有价值`}><ThumbsDown size={14} /></button>
+        <button className="idea-no-value" onClick={() => onNoValue(index)} aria-label={`${idea.name}没有价值`}><ThumbsDown size={13} /> 没有价值</button>
       </article>
     ))}
   </div>
