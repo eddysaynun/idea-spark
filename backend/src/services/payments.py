@@ -31,17 +31,7 @@ class PaymentRefund:
     amount_fen: int
 
 
-class PaymentProvider:
-    channel = ""
-
-    async def create_checkout(self, order: Dict[str, Any], origin: str, scene: str) -> Dict[str, str]:
-        raise NotImplementedError
-
-    async def verify_notification(self, headers: Dict[str, str], body: bytes) -> PaymentNotification:
-        raise NotImplementedError
-
-
-class AlipayProvider(PaymentProvider):
+class AlipayProvider:
     """Delegates RSA2 operations to a private JavaScript Worker via Service Binding."""
 
     channel = "alipay"
@@ -127,7 +117,7 @@ class PaymentRegistry:
             "alipay": ["应用 AppID", "应用私钥", "支付宝公钥", "Seller ID"],
         }
 
-    def get(self, channel: str) -> PaymentProvider | None:
+    def get(self, channel: str) -> AlipayProvider | None:
         return self.providers.get(channel)
 
     def public_status(self) -> Dict[str, Dict[str, Any]]:

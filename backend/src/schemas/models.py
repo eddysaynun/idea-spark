@@ -44,14 +44,6 @@ class GenerateRequest(BaseModel):
     model: Optional[str] = Field(None, min_length=1, max_length=200, description="本次使用的模型")
 
 
-class GenerateResponse(BaseModel):
-    """生成 Ideas 响应"""
-    success: bool
-    session_id: str
-    ideas: List[Dict[str, Any]]
-    total: int
-
-
 class DetailRequest(BaseModel):
     """详细方案请求"""
     session_id: str = Field(..., description="会话 ID")
@@ -105,17 +97,3 @@ class DetectModelsResponse(BaseModel):
     """检测模型响应"""
     success: bool
     models: List[str]
-
-
-# ============ Common Schema ============
-
-class HealthResponse(BaseModel):
-    """健康检查响应"""
-    status: str
-    timestamp: str
-
-
-class APIRootResponse(BaseModel):
-    """API 根路径响应"""
-    message: str
-    version: str

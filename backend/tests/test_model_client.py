@@ -127,6 +127,36 @@ async def test_model_call_logs_trace_stage_duration_and_output_size(caplog):
 
 
 @pytest.mark.asyncio
+async def test_non_stream_model_call_logs_provider_token_usage(caplog):
+    response = FakeResponse({
+        "choices": [{"message": {"content": "measured output"}}],
+        "usage": {
+            "prompt_tokens": 120,
+            "completion_tokens": 45,
+            "total_tokens": 165,
+            "prompt_tokens_details": {"cached_tokens": 20},
+            "completion_tokens_details": {"reasoning_tokens": 30},
+        },
+    })
+    client = ModelClient(
+        ModelConfig(base_url="https://qwen-api.example/v1", model="qwen35_27b"),
+        service_binding=FakeBinding(response),
+    )
+
+    with caplog.at_level(logging.INFO):
+        assert await client.generate("measure", stage="editor") == "measured output"
+
+    event = next(json.loads(record.message) for record in caplog.records if '"event": "model_call"' in record.message)
+    assert event["usage"] == {
+        "prompt_tokens": 120,
+        "completion_tokens": 45,
+        "total_tokens": 165,
+        "cached_tokens": 20,
+        "reasoning_tokens": 30,
+    }
+
+
+@pytest.mark.asyncio
 async def test_stream_model_call_logs_final_content_size(caplog):
     binding = FakeBinding(FakeResponse(
         'data: {"choices":[{"delta":{"content":"答案"}}]}\n\n'
@@ -148,6 +178,34 @@ async def test_stream_model_call_logs_final_content_size(caplog):
     assert event["stage"] == "explorer"
     assert event["stream"] is True
     assert event["output_chars"] == len("答案")
+
+
+@pytest.mark.asyncio
+async def test_stream_model_call_requests_and_logs_provider_token_usage(caplog):
+    binding = FakeBinding(FakeResponse(
+        'data: {"choices":[{"delta":{"content":"答案"}}]}\n\n'
+        'data: {"choices":[],"usage":{"prompt_tokens":80,"completion_tokens":12,"total_tokens":92}}\n\n'
+        'data: [DONE]\n'
+    ))
+    client = ModelClient(
+        ModelConfig(base_url="https://qwen-api.example/v1", model="qwen35_27b"),
+        service_binding=binding,
+    )
+
+    with caplog.at_level(logging.INFO):
+        chunks = [chunk async for chunk in client.generate_stream(
+            "explore", trace_id="project-usage", stage="explorer"
+        )]
+
+    request_body = json.loads(binding.calls[0][1]["body"])
+    event = next(json.loads(record.message) for record in caplog.records if '"event": "model_call"' in record.message)
+    assert request_body["stream_options"] == {"include_usage": True}
+    assert chunks == [{"type": "content", "data": "答案"}]
+    assert event["usage"] == {
+        "prompt_tokens": 80,
+        "completion_tokens": 12,
+        "total_tokens": 92,
+    }
 
 
 @pytest.mark.asyncio

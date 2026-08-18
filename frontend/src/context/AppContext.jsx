@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { authAPI, ideasAPI, modelAPI, sessionAPI } from '../api';
-import { logger } from '../utils/logger';
 import { consumeSseStream } from '../utils/sse';
 import { AppContext } from './app-context';
 
@@ -52,7 +51,7 @@ export const AppProvider = ({ children }) => {
       const data = await modelAPI.listModels();
       if (data.success) setAvailableModels(data.models);
     } catch (error) {
-      logger.error('Failed to load models', error.message);
+      console.error('Failed to load models', error);
     }
   }, [user]);
 
@@ -65,7 +64,7 @@ export const AppProvider = ({ children }) => {
       const data = await sessionAPI.listSessions();
       if (data.success) setSessions(data.sessions);
     } catch (error) {
-      logger.error('Failed to load sessions', error);
+      console.error('Failed to load sessions', error);
     }
   }, [user]);
 

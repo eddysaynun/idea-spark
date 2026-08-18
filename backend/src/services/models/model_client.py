@@ -72,11 +72,11 @@ class ModelClient:
         """
         started = time.perf_counter()
         try:
-            result = await self._call_compatible(
+            result, usage = await self._call_compatible(
                 prompt, model, thinking=thinking, max_tokens=max_tokens
             )
             self._log_call(
-                trace_id, stage, model, thinking, False, started, len(result), True
+                trace_id, stage, model, thinking, False, started, len(result), True, usage
             )
             return result
         except Exception as e:
@@ -105,15 +105,19 @@ class ModelClient:
         """
         started = time.perf_counter()
         output_chars = 0
+        usage = None
         try:
             async for chunk in self._call_compatible_stream(
                 prompt, model, thinking=thinking, max_tokens=max_tokens
             ):
+                if chunk["type"] == "usage":
+                    usage = chunk["data"]
+                    continue
                 if chunk["type"] == "content":
                     output_chars += len(chunk["data"])
                 yield chunk
             self._log_call(
-                trace_id, stage, model, thinking, True, started, output_chars, True
+                trace_id, stage, model, thinking, True, started, output_chars, True, usage
             )
         except Exception as e:
             self._log_call(
@@ -132,8 +136,9 @@ class ModelClient:
         started: float,
         output_chars: int,
         success: bool,
+        usage: Optional[Dict[str, int]] = None,
     ) -> None:
-        logger.info(json.dumps({
+        event = {
             "event": "model_call",
             "trace_id": trace_id,
             "stage": stage,
@@ -143,7 +148,10 @@ class ModelClient:
             "duration_ms": round((time.perf_counter() - started) * 1000),
             "output_chars": output_chars,
             "success": success,
-        }, ensure_ascii=False))
+        }
+        if usage is not None:
+            event["usage"] = usage
+        logger.info(json.dumps(event, ensure_ascii=False))
     
     async def _call_compatible(
         self,
@@ -231,7 +239,8 @@ class ModelClient:
             ],
             "temperature": self.config.temperature,
             "max_tokens": max_tokens or self.config.max_tokens,
-            "stream": True  # 流式
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
         self._apply_model_compatibility(payload, model, thinking)
         
@@ -283,7 +292,7 @@ class ModelClient:
             raise TransientModelError("Model proxy request failed") from None
 
     @staticmethod
-    def _parse_completion_response(status: int, text_data: str) -> str:
+    def _parse_completion_response(status: int, text_data: str):
         logger.info("📡 Response status: %s", status)
         if status != 200:
             logger.error("❌ Compatible API error: %s - %s", status, text_data[:500])
@@ -301,7 +310,7 @@ class ModelClient:
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError(f"Invalid response structure: {exc}") from exc
         logger.info("✅ Content extracted, length: %s", len(content))
-        return content
+        return content, ModelClient._extract_usage(data)
 
     @classmethod
     def _parse_sse_text(cls, stream_text: str):
@@ -314,14 +323,44 @@ class ModelClient:
             if data_str == "[DONE]":
                 break
             try:
-                choice = json.loads(data_str).get("choices", [{}])[0]
-            except (json.JSONDecodeError, IndexError, TypeError):
+                data = json.loads(data_str)
+            except json.JSONDecodeError:
                 continue
+            usage = cls._extract_usage(data)
+            if usage is not None:
+                yield {"type": "usage", "data": usage}
+            choices = data.get("choices") or []
+            if not choices or not isinstance(choices[0], dict):
+                continue
+            choice = choices[0]
             thinking, content = cls._extract_stream_parts(choice)
             if thinking:
                 yield {"type": "thinking", "data": thinking}
             if content:
                 yield {"type": "content", "data": content}
+
+    @staticmethod
+    def _extract_usage(data: Dict[str, Any]) -> Optional[Dict[str, int]]:
+        """只记录供应商明确返回的计数，不推算或影响业务额度。"""
+        raw = data.get("usage")
+        if not isinstance(raw, dict):
+            return None
+
+        usage = {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                usage[key] = value
+
+        for details_key, token_key in (
+            ("prompt_tokens_details", "cached_tokens"),
+            ("completion_tokens_details", "reasoning_tokens"),
+        ):
+            details = raw.get(details_key)
+            value = details.get(token_key) if isinstance(details, dict) else None
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                usage[token_key] = value
+        return usage or None
 
     @staticmethod
     def _apply_model_compatibility(
