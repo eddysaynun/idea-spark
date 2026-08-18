@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { authAPI, configAPI, ideasAPI, sessionAPI } from '../api';
+import { authAPI, ideasAPI, modelAPI, sessionAPI } from '../api';
 import { logger } from '../utils/logger';
 import { consumeSseStream } from '../utils/sse';
 import { AppContext } from './app-context';
@@ -69,7 +69,7 @@ export const AppProvider = ({ children }) => {
   const loadModels = useCallback(async () => {
     if (!user) return;
     try {
-      const data = await configAPI.listModels();
+      const data = await modelAPI.listModels();
       if (data.success) setAvailableModels(data.models);
     } catch (error) {
       logger.error('Failed to load models', error.message);

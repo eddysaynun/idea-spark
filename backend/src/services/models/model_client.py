@@ -32,7 +32,6 @@ class ModelClient:
     def __init__(self, config: ModelConfig, service_binding=None):
         self.config = config
         self.service_binding = service_binding
-        self._detected_models: List[str] = []
     
     async def __aenter__(self):
         """异步上下文管理器进入"""
@@ -346,100 +345,13 @@ class ModelClient:
         content = delta.get("content") or choice.get("content") or ""
         return thinking, content
     
-    async def _auto_detect_model(self) -> str:
-        """自动检测兼容 API 支持的模型（返回第一个）。"""
-        models = await self.detect_models()
-        if models:
-            # 优先选择常见模型
-            priority_models = ["gpt-4", "gpt-4-turbo", "claude-3", "qwen", "llama"]
-            for priority in priority_models:
-                for name in models:
-                    if priority in name.lower():
-                        logger.info(f"🎯 Selected priority model: {name}")
-                        return name
-            # 返回第一个
-            logger.info(f"🎯 Selected first model: {models[0]}")
-            return models[0]
-        
-        # 如果检测失败，返回默认值
-        logger.warning("⚠️  Model detection failed, using default: gpt-4")
-        return "gpt-4"
-    
-    async def detect_models(self) -> List[str]:
-        """检测兼容 API 支持的模型列表。"""
-        base_url = self.config.base_url.rstrip('/')
-        
-        # API base 固定为 /v1 格式，只尝试 /models endpoint
-        endpoint = f"{base_url}/models"
-        
-        logger.info(f"🔍 Detecting models from: {endpoint}")
-        
-        try:
-            if self.service_binding is not None:
-                headers = {}
-                if self.config.api_key:
-                    headers["Authorization"] = f"Bearer {self.config.api_key}"
-                response = await self._binding_fetch(endpoint, headers=headers)
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(
-                        "❌ Failed to get models: %s - %s",
-                        response.status,
-                        error_text[:200],
-                    )
-                    return []
-                return self._extract_model_names(await response.json())
-
-            headers = {"Authorization": f"Bearer {self.config.api_key}"} if self.config.api_key else {}
-            status, text_data = await request_text(endpoint, headers=headers, timeout=self.config.timeout)
-            if status != 200:
-                logger.error(f"❌ Failed to get models: {status} - {text_data[:200]}")
-                return []
-            data = json.loads(text_data)
-            logger.info(f"📄 Response data type: {type(data)}")
-            return self._extract_model_names(data)
-        
-        except Exception as e:
-            logger.error(f"❌ Model detection failed: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return []
-
-    def _extract_model_names(self, data: Any) -> List[str]:
-        """兼容常见模型列表响应并更新可选模型缓存。"""
-        models = data if isinstance(data, list) else []
-        if isinstance(data, dict):
-            for key in ("data", "models", "results"):
-                if isinstance(data.get(key), list):
-                    models = data[key]
-                    break
-        model_names = [
-            item["id"] if isinstance(item, dict) and "id" in item else item
-            for item in models
-            if (isinstance(item, dict) and "id" in item) or isinstance(item, str)
-        ]
-        if model_names:
-            self._detected_models = model_names
-            logger.info("✅ Found %s models: %s", len(model_names), model_names)
-            return model_names
-        logger.warning("⚠️  Response doesn't contain models")
-        return []
-    
     def available_models(self) -> List[str]:
-        """返回可供工作台选择的模型，不触发远程请求。"""
-        return list(dict.fromkeys([self.config.model, *self._detected_models]))
+        """返回部署时授权给工作台的模型。"""
+        return [self.config.model]
 
     def validate_model(self, model: str) -> str:
-        """只允许工作台使用已配置或已探测到的模型。"""
+        """只允许工作台使用部署时配置的模型。"""
         selected = model or self.config.model
         if selected not in self.available_models():
             raise ValueError("所选模型不可用，请刷新模型列表后重试")
         return selected
-
-    def update_config(self, new_config: Dict[str, Any]):
-        """更新配置"""
-        for key, value in new_config.items():
-            if hasattr(self.config, key):
-                setattr(self.config, key, value)
-        self._detected_models = []
-        logger.info("Model config updated: model=%s", self.config.model)

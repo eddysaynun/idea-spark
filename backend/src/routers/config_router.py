@@ -1,4 +1,4 @@
-"""受保护、仅进程内生效的模型配置 API。"""
+"""管理员鉴权与工作台模型列表。"""
 
 import hmac
 import os
@@ -6,10 +6,10 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
-from schemas.models import ConfigRequest, ConfigResponse, DetectModelsResponse
+from schemas.models import DetectModelsResponse
 from services.auth import current_user
 
-router = APIRouter(tags=["config"])
+router = APIRouter(tags=["models"])
 
 
 def get_model_client(request: Request):
@@ -38,51 +38,6 @@ def require_config_admin(
             status_code=503,
             detail="公网配置管理未启用，请设置 IDEA_SPARK_ADMIN_TOKEN",
         )
-
-
-def public_config(model_client) -> dict:
-    """返回前端所需配置，永不回传密钥。"""
-    config = model_client.config
-    return {
-        "base_url": config.base_url,
-        "model": config.model,
-        "temperature": config.temperature,
-        "max_tokens": config.max_tokens,
-        "has_api_key": bool(config.api_key),
-        "available_models": model_client.available_models(),
-        "persistence": "memory",
-    }
-
-
-@router.get("/config", response_model=ConfigResponse)
-async def get_config(
-    _admin=Depends(require_config_admin),
-    model_client=Depends(get_model_client),
-):
-    return ConfigResponse(success=True, config=public_config(model_client))
-
-
-@router.post("/config", response_model=ConfigResponse)
-async def update_config(
-    body: ConfigRequest,
-    _admin=Depends(require_config_admin),
-    model_client=Depends(get_model_client),
-):
-    changes = body.model_dump(exclude_unset=True)
-    for key in ("api_key",):
-        if changes.get(key) == "":
-            changes.pop(key)
-    model_client.update_config(changes)
-    return ConfigResponse(success=True, config=public_config(model_client))
-
-
-@router.get("/detect-models", response_model=DetectModelsResponse)
-async def detect_models(
-    _admin=Depends(require_config_admin),
-    model_client=Depends(get_model_client),
-):
-    models = await model_client.detect_models()
-    return DetectModelsResponse(success=bool(models), models=models)
 
 
 @router.get("/models", response_model=DetectModelsResponse)

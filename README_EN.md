@@ -61,7 +61,7 @@ cd ..
 
 Deployment administrators inject the OpenAI-compatible `/v1` Base URL, API key, and default model as secrets. Signed-in users may choose only from models authorized by the platform and cannot read or change upstream credentials.
 
-Configuration is never written to a file or database. Startup values come from environment variables or Worker secrets; admin-token-protected runtime changes live only in process memory and reset after restart.
+Configuration is never written to a file or database. Values are read only at startup from environment variables or Worker secrets; no public API reads, changes, or probes the upstream connection. The current release exposes the configured default model to the workbench.
 
 ```bash
 IDEA_SPARK_ADMIN_TOKEN=<strong-random-token>
@@ -73,7 +73,7 @@ IDEA_SPARK_MODEL_MAX_TOKENS=16384
 IDEA_SPARK_MODEL_TIMEOUT=600
 ```
 
-Public deployments must set `IDEA_SPARK_ADMIN_TOKEN`. Configuration reads, updates, and remote model discovery require `X-Admin-Token`; without a token those endpoints only accept local requests.
+`IDEA_SPARK_ADMIN_TOKEN` protects `/admin` user and quota operations only; it does not control model configuration.
 
 ## Cloudflare deployment
 
@@ -105,8 +105,8 @@ This runs frontend lint, Node tests, production build, backend pytest, Python co
 - Generation requires idempotency keys, reserves usage before model work, and refunds failed or interrupted work. Cached detailed plans do not charge twice.
 - Every project, history, and plan query is scoped by authenticated `user_id`.
 - CORS defaults to local frontend origins and can be set with `CORS_ORIGINS`.
-- Model configuration is process-memory only; secrets are never returned by the API.
-- Workbench requests may only select the configured default model or a model discovered from the endpoint.
+- Model configuration is initialized only from the deployment environment; no public configuration or discovery endpoint is exposed.
+- Workbench requests may only select the configured default model.
 - Invalid model JSON fails explicitly instead of returning fabricated fallback output.
 - History is persisted in D1 and isolated per authenticated user. Users may explicitly import legacy browser-local sessions.
 

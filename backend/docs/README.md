@@ -38,8 +38,7 @@ complete
 | Method | Path | 说明 |
 |---|---|---|
 | GET | `/health` | 健康检查 |
-| GET/POST | `/api/config` | 受管理员保护地读取/临时应用模型配置；仅进程内生效且不返回密钥原文 |
-| GET | `/api/detect-models` | 受管理员保护地探测 Custom API 模型 |
+| GET | `/api/models` | 返回登录用户可选择的部署授权模型名，不暴露连接或密钥 |
 | POST | `/api/generate` | 非流式三阶段生成 |
 | POST | `/api/generate-stream` | SSE 三阶段生成 |
 | POST | `/api/detail` | 生成并缓存详细方案 |

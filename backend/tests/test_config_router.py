@@ -1,22 +1,24 @@
 import pytest
+import httpx
 from fastapi import HTTPException, Request
 from fastapi import FastAPI
 
 from services.models.model_client import ModelClient, ModelConfig
-from routers.config_router import public_config, require_config_admin, update_config
-from schemas.models import ConfigRequest
+from routers.config_router import require_config_admin, router
 
 
-def test_public_config_never_exposes_api_keys():
-    client = ModelClient(
-        ModelConfig(api_key="model-secret")
-    )
-
-    config = public_config(client)
-
-    assert "api_key" not in config
-    assert config["has_api_key"] is True
-    assert config["persistence"] == "memory"
+@pytest.mark.asyncio
+async def test_retired_model_config_endpoints_are_not_exposed():
+    test_app = FastAPI()
+    test_app.include_router(router, prefix="/api")
+    test_app.state.admin_token = "server-secret"
+    test_app.state.model_client = ModelClient(ModelConfig())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=test_app), base_url="http://test"
+    ) as client:
+        assert (await client.get("/api/config")).status_code == 404
+        assert (await client.post("/api/config", json={"model": "other"})).status_code == 404
+        assert (await client.get("/api/detect-models")).status_code == 404
 
 
 def make_request(host: str, headers=None) -> Request:
@@ -75,19 +77,3 @@ def test_config_admin_without_client_scope_treats_cloudflare_request_as_remote(m
         require_config_admin(request)
 
     assert error.value.status_code == 503
-
-
-@pytest.mark.asyncio
-async def test_update_config_only_changes_process_memory():
-    client = ModelClient(ModelConfig())
-
-    response = await update_config(
-        ConfigRequest(base_url="https://model.example/v1", model="qwen3.5-27b"),
-        _admin=None,
-        model_client=client,
-    )
-
-    assert response.success is True
-    assert client.config.base_url == "https://model.example/v1"
-    assert client.config.model == "qwen3.5-27b"
-    assert response.config["persistence"] == "memory"

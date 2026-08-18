@@ -9,22 +9,6 @@ from typing import Annotated, Optional, List, Dict, Any, Literal
 IdeaListEntry = Annotated[str, Field(min_length=1, max_length=4000)]
 
 
-# ============ Config Schema ============
-
-class ConfigRequest(BaseModel):
-    """配置请求"""
-    base_url: Optional[str] = Field(None, min_length=8, max_length=500, description="OpenAI-compatible Base URL")
-    model: Optional[str] = Field(None, min_length=1, max_length=200, description="默认模型")
-    api_key: Optional[str] = Field(None, max_length=1000, description="API Key")
-    temperature: Optional[float] = Field(None, ge=0, le=2, description="Temperature")
-
-
-class ConfigResponse(BaseModel):
-    """配置响应"""
-    success: bool
-    config: Dict[str, Any]
-
-
 # ============ Ideas Schema ============
 
 class IdeaItem(BaseModel):

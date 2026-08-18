@@ -32,9 +32,9 @@
 ## 架构事实
 
 - 前端：React + Vite；共享状态在 `frontend/src/context/AppContext.jsx`，SSE 解析在 `frontend/src/utils/sse.js`。
-- 后端：FastAPI；路由只处理 HTTP 语义，业务会话在 `services/idea_service.py`，三阶段模型编排在 `services/agents/idea_pipeline.py`。
+- 后端：FastAPI；路由只处理 HTTP 语义，用户/额度/项目持久化在 `services/account_store.py`，三阶段模型编排在 `services/agents/idea_pipeline.py`。
 - 模型流程固定为 Explorer → Critic → Editor。扩展阶段时必须保留 JSON 校验、会话清理、SSE error 事件和单元测试。
-- 配置响应永不返回密钥；空密钥表示保持原值。配置仅从环境变量初始化，运行时修改只存在进程内存；配置接口必须经过管理员令牌或本机访问校验。
+- 模型配置仅从环境变量或 Worker Secret 初始化；不得恢复公网读取、修改或远程探测接口。管理员令牌只保护管理员业务 API，不用于模型热配置。
 
 ## 完成报告格式
 

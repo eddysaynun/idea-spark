@@ -15,8 +15,8 @@ const apiClient = axios.create({
 
 // ============ API Methods ============
 
-// 配置相关
-export const configAPI = {
+// 模型选择
+export const modelAPI = {
   listModels: async () => {
     const response = await apiClient.get('/models');
     return response.data;

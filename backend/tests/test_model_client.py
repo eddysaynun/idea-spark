@@ -26,11 +26,9 @@ def test_extracts_legacy_reasoning_shape():
     assert content == "回答"
 
 
-def test_workbench_only_accepts_configured_or_detected_models():
+def test_workbench_only_accepts_configured_model():
     client = ModelClient(ModelConfig(model="default-model"))
-    client._detected_models = ["model-a", "model-b"]
 
-    assert client.validate_model("model-b") == "model-b"
     assert client.validate_model("") == "default-model"
     with pytest.raises(ValueError, match="所选模型不可用"):
         client.validate_model("hidden-model")
@@ -58,23 +56,6 @@ class FakeBinding:
     async def fetch(self, url, **options):
         self.calls.append((url, options))
         return self.response
-
-
-@pytest.mark.asyncio
-async def test_detect_models_uses_service_binding_with_bearer_auth():
-    binding = FakeBinding(FakeResponse({"data": [{"id": "qwen35_27b"}]}))
-    client = ModelClient(
-        ModelConfig(base_url="https://qwen-api.example/v1", api_key="secret"),
-        service_binding=binding,
-    )
-
-    assert await client.detect_models() == ["qwen35_27b"]
-    assert binding.calls == [
-        (
-            "https://qwen-api.example/v1/models",
-            {"headers": {"Authorization": "Bearer secret"}},
-        )
-    ]
 
 
 def test_parse_service_binding_sse_response():
