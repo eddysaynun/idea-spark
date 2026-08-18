@@ -1,6 +1,7 @@
 import { ArrowUpRight, Lightbulb, ShieldCheck } from 'lucide-react';
 
 import { useApp } from '../context/app-context';
+import { productAPI } from '../api';
 import GenerateForm from './GenerateForm';
 import IdeasGrid from './IdeasGrid';
 import ProgressPanel from './ProgressPanel';
@@ -8,6 +9,15 @@ import './GeneratePage.css';
 
 const GeneratePage = ({ onOpenIdea }) => {
   const { isGenerating, progress, generationError, ideas, currentSession } = useApp();
+
+  const record = (action, index) => {
+    if (currentSession?.id) productAPI.record(currentSession.id, index, action).catch(() => {});
+  };
+
+  const openIdea = (index) => {
+    record('expand', index);
+    onOpenIdea(index);
+  };
 
   return (
     <div className="generate-page">
@@ -43,7 +53,7 @@ const GeneratePage = ({ onOpenIdea }) => {
           </div>
 
           {ideas.length > 0 ? (
-            <IdeasGrid ideas={ideas} onOpenIdea={onOpenIdea} />
+            <IdeasGrid ideas={ideas} onOpenIdea={openIdea} onNoValue={(index) => record('no_value', index)} />
           ) : (
             <div className="results-empty">
               <div className="spark-orbit"><Lightbulb size={28} /></div>

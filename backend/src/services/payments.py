@@ -15,6 +15,22 @@ class PaymentNotification:
     payload_digest: str
 
 
+@dataclass(frozen=True)
+class PaymentQuery:
+    provider_order_id: str
+    provider_trade_id: str
+    status: str
+    amount_fen: int
+
+
+@dataclass(frozen=True)
+class PaymentRefund:
+    provider_order_id: str
+    provider_trade_id: str
+    refund_request_id: str
+    amount_fen: int
+
+
 class PaymentProvider:
     channel = ""
 
@@ -48,11 +64,11 @@ class AlipayProvider(PaymentProvider):
         )
         text = await response.text()
         if response.status != 200:
-            raise ValueError("支付宝支付网关拒绝了请求")
+            raise RuntimeError("支付宝支付网关拒绝了请求")
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
-            raise ValueError("支付宝支付网关返回无效响应") from exc
+            raise RuntimeError("支付宝支付网关返回无效响应") from exc
 
     async def create_checkout(self, order: Dict[str, Any], origin: str, scene: str) -> Dict[str, str]:
         result = await self._call("/checkout", {
@@ -77,6 +93,28 @@ class AlipayProvider(PaymentProvider):
             provider_trade_id=result["provider_trade_id"],
             amount_fen=int(result["amount_fen"]),
             payload_digest=result["payload_digest"],
+        )
+
+    async def query_order(self, order: Dict[str, Any]) -> PaymentQuery:
+        result = await self._call("/query", {"provider_order_id": order["provider_order_id"]})
+        return PaymentQuery(
+            provider_order_id=result["provider_order_id"],
+            provider_trade_id=result.get("provider_trade_id", ""),
+            status=result["status"],
+            amount_fen=int(result["amount_fen"]),
+        )
+
+    async def refund_order(self, order: Dict[str, Any], refund_request_id: str) -> PaymentRefund:
+        result = await self._call("/refund", {
+            "provider_order_id": order["provider_order_id"],
+            "amount_fen": int(order["amount_fen"]),
+            "refund_request_id": refund_request_id,
+        })
+        return PaymentRefund(
+            provider_order_id=result["provider_order_id"],
+            provider_trade_id=result.get("provider_trade_id", ""),
+            refund_request_id=result["refund_request_id"],
+            amount_fen=int(result["amount_fen"]),
         )
 
 

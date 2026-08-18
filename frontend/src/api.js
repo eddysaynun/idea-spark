@@ -27,8 +27,18 @@ export const authAPI = {
   me: async () => (await apiClient.get('/auth/me')).data,
   providers: async () => (await apiClient.get('/auth/providers')).data,
   exchange: async (accessToken) => (await apiClient.post('/auth/exchange', { access_token: accessToken })).data,
+  restore: async (accessToken) => (await apiClient.post('/auth/restore', { access_token: accessToken })).data,
   logout: async () => (await apiClient.post('/auth/logout')).data,
-  loginUrl: (returnTo = '/') => `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`,
+};
+
+export const accountAPI = {
+  requestDeletion: async (confirmation) => (await apiClient.post('/account/deletion', { confirmation })).data,
+};
+
+export const productAPI = {
+  record: async (projectId, ideaIndex, action) => (await apiClient.post('/product-events', {
+    project_id: projectId, idea_index: ideaIndex, action,
+  }, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data,
 };
 
 export const adminAPI = {
@@ -49,23 +59,19 @@ export const adminAPI = {
   rechargeHistory: async (token, userId) => (await apiClient.get(`/admin/users/${userId}/recharge`, {
     headers: { 'X-Admin-Token': token },
   })).data,
-  purchaseRequests: async (token, status = 'pending') => (await apiClient.get('/admin/purchase-requests', {
-    params: { status }, headers: { 'X-Admin-Token': token },
-  })).data,
-  updatePurchaseRequest: async (token, requestId, status) => (await apiClient.patch(
-    `/admin/purchase-requests/${requestId}`, { status }, { headers: { 'X-Admin-Token': token } },
-  )).data,
   paymentOrders: async (token, status = '') => (await apiClient.get('/admin/payment-orders', {
     params: { status }, headers: { 'X-Admin-Token': token },
   })).data,
+  queryPayment: async (token, orderId) => (await apiClient.post(
+    `/admin/payment-orders/${orderId}/query`, {}, { headers: { 'X-Admin-Token': token } },
+  )).data,
+  refundPayment: async (token, orderId) => (await apiClient.post(
+    `/admin/payment-orders/${orderId}/refund`, {}, { headers: { 'X-Admin-Token': token } },
+  )).data,
 };
 
 export const billingAPI = {
   packages: async () => (await apiClient.get('/billing/packages')).data,
-  requests: async () => (await apiClient.get('/billing/requests')).data,
-  requestPackage: async (packageId, note = '') => (await apiClient.post('/billing/requests', {
-    package_id: packageId, note,
-  })).data,
   orders: async () => (await apiClient.get('/billing/orders')).data,
   order: async (orderId) => (await apiClient.get(`/billing/orders/${orderId}`)).data,
   createOrder: async (packageId, channel) => (await apiClient.post('/billing/orders', {
@@ -88,15 +94,6 @@ export const ideasAPI = {
 
 // 会话管理
 export const sessionAPI = {
-  importLocal: async (session, idempotencyKey) => (await apiClient.post('/projects/import', {
-    idempotency_key: idempotencyKey,
-    direction: session.direction,
-    count: session.ideas.length,
-    category: session.category || 'general',
-    model: session.model,
-    ideas: session.ideas,
-    detailed_plans: session.detailed_plans || {},
-  })).data,
   // 获取会话列表
   listSessions: async () => {
     const response = await apiClient.get('/sessions');

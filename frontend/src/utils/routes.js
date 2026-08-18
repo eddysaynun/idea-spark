@@ -5,6 +5,9 @@ const PAGE_PATHS = {
   login: '/login',
   admin: '/admin',
   detail: '/detail',
+  privacy: '/privacy',
+  terms: '/terms',
+  refund: '/refund',
 };
 
 export const pageFromPath = (pathname) => {

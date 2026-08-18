@@ -141,6 +141,86 @@ async function verifyNotification(payload, env) {
   });
 }
 
+async function alipayApi(method, bizContent, responseKey, env) {
+  const parameters = new URLSearchParams({
+    app_id: env.ALIPAY_APP_ID,
+    method,
+    format: 'JSON',
+    charset: 'utf-8',
+    sign_type: 'RSA2',
+    timestamp: alipayTimestamp(),
+    version: '1.0',
+    biz_content: JSON.stringify(bizContent),
+  });
+  parameters.set('sign', await signParameters(parameters, env.ALIPAY_PRIVATE_KEY));
+  const response = await fetch(ALIPAY_GATEWAY, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
+    body: parameters.toString(),
+  });
+  if (!response.ok) throw new Error('alipay unavailable');
+  const result = (await response.json())[responseKey];
+  if (!result || result.code !== '10000') throw new Error(`alipay rejected request (${result?.sub_code || result?.code || 'invalid'})`);
+  return result;
+}
+
+async function queryTrade(payload, env) {
+  if (!/^[a-zA-Z0-9-]{1,64}$/.test(payload.provider_order_id || '')) {
+    return json({ error: 'invalid provider order id' }, 400);
+  }
+  try {
+    const result = await alipayApi(
+      'alipay.trade.query',
+      { out_trade_no: payload.provider_order_id },
+      'alipay_trade_query_response',
+      env,
+    );
+    const statuses = {
+      WAIT_BUYER_PAY: 'pending', TRADE_SUCCESS: 'paid', TRADE_FINISHED: 'paid', TRADE_CLOSED: 'closed',
+    };
+    return json({
+      provider_order_id: result.out_trade_no,
+      provider_trade_id: result.trade_no || '',
+      status: statuses[result.trade_status] || 'unknown',
+      amount_fen: cents(result.total_amount || ''),
+    });
+  } catch (error) {
+    return json({ error: String(error.message || error) }, 502);
+  }
+}
+
+async function refundTrade(payload, env) {
+  if (!/^[a-zA-Z0-9-]{1,64}$/.test(payload.provider_order_id || '')
+      || !/^[a-zA-Z0-9-]{1,64}$/.test(payload.refund_request_id || '')
+      || !Number.isInteger(payload.amount_fen) || payload.amount_fen <= 0) {
+    return json({ error: 'invalid refund' }, 400);
+  }
+  try {
+    const result = await alipayApi(
+      'alipay.trade.refund',
+      {
+        out_trade_no: payload.provider_order_id,
+        refund_amount: (payload.amount_fen / 100).toFixed(2),
+        out_request_no: payload.refund_request_id,
+      },
+      'alipay_trade_refund_response',
+      env,
+    );
+    const amountFen = cents(result.refund_fee || '');
+    if (result.out_trade_no !== payload.provider_order_id || amountFen !== payload.amount_fen) {
+      return json({ error: 'refund response mismatch' }, 502);
+    }
+    return json({
+      provider_order_id: result.out_trade_no,
+      provider_trade_id: result.trade_no || '',
+      refund_request_id: payload.refund_request_id,
+      amount_fen: amountFen,
+    });
+  } catch (error) {
+    return json({ error: String(error.message || error) }, 502);
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (!configured(env)) return json({ error: 'gateway not configured' }, 503);
@@ -152,6 +232,8 @@ export default {
     const path = new URL(request.url).pathname;
     if (path === '/checkout') return createCheckout(payload, env);
     if (path === '/verify') return verifyNotification(payload, env);
+    if (path === '/query') return queryTrade(payload, env);
+    if (path === '/refund') return refundTrade(payload, env);
     return json({ error: 'not found' }, 404);
   },
 };

@@ -1,8 +1,4 @@
 .history-list { display: grid; border-top: 1px solid var(--line); }
-.local-import { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 24px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
-.local-import div { display: grid; gap: 4px; }
-.local-import span { color: var(--muted); font-size: 12px; }
-.local-import button { padding: 9px 12px; border: 1px solid var(--ink); border-radius: 9px; color: white; background: var(--ink); }
 .history-list article { position: relative; border-bottom: 1px solid var(--line); }
 .history-open { display: grid; grid-template-columns: 150px minmax(0,1fr) 130px 20px; gap: 24px; align-items: center; width: 100%; padding: 24px 48px 24px 8px; border: 0; text-align: left; background: transparent; }
 .history-open:hover { background: rgba(255,255,255,.55); }

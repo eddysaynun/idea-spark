@@ -15,6 +15,16 @@ h1, h2, h3 { font-family: var(--font-display); }
 .page-empty { display: grid; place-items: center; min-height: 380px; padding: 40px; text-align: center; border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); }
 .page-empty h2 { margin: 16px 0 8px; color: var(--ink); }
 .text-button { border: 0; background: transparent; color: var(--violet); font-weight: 700; }
+.app-footer { display: flex; justify-content: center; gap: 18px; padding: 0 20px 34px; }
+.app-footer button { border: 0; background: transparent; color: var(--muted); font-size: 12px; }
+.legal-page { width: min(100%, 760px); margin: 0 auto; }
+.legal-page h1 { margin-bottom: 12px; font-size: clamp(34px, 5vw, 54px); }
+.legal-summary { color: var(--muted); font-size: 18px; line-height: 1.7; }
+.legal-date { margin: 28px 0 36px; color: var(--muted); font: 12px/1.4 var(--font-mono); }
+.legal-page section { padding: 24px 0; border-top: 1px solid var(--line); }
+.legal-page section h2 { margin-bottom: 10px; font-size: 19px; }
+.legal-page section p { margin: 0; color: var(--muted); line-height: 1.8; }
+.legal-contact { display: inline-block; margin-top: 24px; color: var(--violet); font-weight: 700; }
 
 @media (max-width: 800px) {
   .main-content { padding: 28px 18px 64px; }

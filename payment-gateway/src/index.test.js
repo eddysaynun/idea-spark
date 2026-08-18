@@ -117,3 +117,70 @@ test('verified notification returns server fulfillment fields', async () => {
       .then((digest) => [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')),
   });
 });
+
+test('query sends a signed Alipay request and normalizes a paid trade', async () => {
+  const originalFetch = globalThis.fetch;
+  let outbound;
+  globalThis.fetch = async (url, options) => {
+    outbound = { url, options };
+    return new Response(JSON.stringify({ alipay_trade_query_response: {
+      code: '10000', out_trade_no: 'ISorder', trade_no: 'trade-1', trade_status: 'TRADE_SUCCESS', total_amount: '29.00',
+    } }));
+  };
+  try {
+    const response = await worker.fetch(new Request('https://internal/query', {
+      method: 'POST', headers: { authorization: 'Bearer internal', 'content-type': 'application/json' },
+      body: JSON.stringify({ provider_order_id: 'ISorder' }),
+    }), {
+      PAYMENT_GATEWAY_TOKEN: 'internal', ALIPAY_APP_ID: 'app', ALIPAY_SELLER_ID: 'seller',
+      ALIPAY_PRIVATE_KEY: privateKey, ALIPAY_PUBLIC_KEY: publicKey,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      provider_order_id: 'ISorder', provider_trade_id: 'trade-1', status: 'paid', amount_fen: 2900,
+    });
+    const parameters = new URLSearchParams(outbound.options.body);
+    assert.equal(parameters.get('method'), 'alipay.trade.query');
+    assert.deepEqual(JSON.parse(parameters.get('biz_content')), { out_trade_no: 'ISorder' });
+    const signature = parameters.get('sign');
+    parameters.delete('sign');
+    assert.equal(await crypto.subtle.verify(
+      'RSASSA-PKCS1-v1_5',
+      await crypto.subtle.importKey('spki', Buffer.from(publicKey.replace(/-----[^-]+-----|\s/g, ''), 'base64'), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']),
+      Buffer.from(signature, 'base64'), new TextEncoder().encode(canonicalize(parameters.entries())),
+    ), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('refund reuses the caller refund id and validates the refunded amount', async () => {
+  const originalFetch = globalThis.fetch;
+  let outbound;
+  globalThis.fetch = async (_url, options) => {
+    outbound = options;
+    return new Response(JSON.stringify({ alipay_trade_refund_response: {
+      code: '10000', out_trade_no: 'ISorder', trade_no: 'trade-1', refund_fee: '29.00', fund_change: 'Y',
+    } }));
+  };
+  try {
+    const response = await worker.fetch(new Request('https://internal/refund', {
+      method: 'POST', headers: { authorization: 'Bearer internal', 'content-type': 'application/json' },
+      body: JSON.stringify({ provider_order_id: 'ISorder', amount_fen: 2900, refund_request_id: 'RForder' }),
+    }), {
+      PAYMENT_GATEWAY_TOKEN: 'internal', ALIPAY_APP_ID: 'app', ALIPAY_SELLER_ID: 'seller',
+      ALIPAY_PRIVATE_KEY: privateKey, ALIPAY_PUBLIC_KEY: publicKey,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      provider_order_id: 'ISorder', provider_trade_id: 'trade-1', refund_request_id: 'RForder', amount_fen: 2900,
+    });
+    const parameters = new URLSearchParams(outbound.body);
+    assert.equal(parameters.get('method'), 'alipay.trade.refund');
+    assert.deepEqual(JSON.parse(parameters.get('biz_content')), {
+      out_trade_no: 'ISorder', refund_amount: '29.00', out_request_no: 'RForder',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

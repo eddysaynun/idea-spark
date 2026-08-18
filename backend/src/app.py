@@ -16,6 +16,8 @@ from routers.stream_router import router as stream_router
 from routers.auth_router import router as auth_router
 from routers.admin_router import router as admin_router
 from routers.billing_router import router as billing_router
+from routers.account_router import router as account_router
+from routers.product_events_router import router as product_events_router
 
 from utils.logger import setup_logging
 logger = logging.getLogger(__name__)
@@ -89,14 +91,6 @@ async def initialize_application(app: FastAPI, env=None) -> None:
         if env is not None
         else os.environ.get("IDEA_SPARK_ADMIN_TOKEN", "")
     )
-    app.state.github_client_id = (
-        str(getattr(env, "GITHUB_CLIENT_ID", ""))
-        if env is not None else os.environ.get("GITHUB_CLIENT_ID", "")
-    )
-    app.state.github_client_secret = (
-        str(getattr(env, "GITHUB_CLIENT_SECRET", ""))
-        if env is not None else os.environ.get("GITHUB_CLIENT_SECRET", "")
-    )
     app.state.supabase_url = (
         str(getattr(env, "SUPABASE_URL", "")).rstrip("/")
         if env is not None else os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -105,8 +99,14 @@ async def initialize_application(app: FastAPI, env=None) -> None:
         str(getattr(env, "SUPABASE_ANON_KEY", ""))
         if env is not None else os.environ.get("SUPABASE_ANON_KEY", "")
     )
+    app.state.supabase_secret_key = (
+        str(getattr(env, "SUPABASE_SECRET_KEY", "") or getattr(env, "SUPABASE_SERVICE_ROLE_KEY", ""))
+        if env is not None
+        else os.environ.get("SUPABASE_SECRET_KEY", "") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    )
     def binding(name: str, default: str = "") -> str:
         return str(getattr(env, name, default)) if env is not None else os.environ.get(name, default)
+    app.state.turnstile_site_key = binding("TURNSTILE_SITE_KEY")
     app.state.supabase_providers = {
         "email": binding("AUTH_EMAIL_ENABLED", "true").lower() == "true",
         "github": binding("AUTH_GITHUB_ENABLED", "false").lower() == "true",
@@ -180,8 +180,10 @@ async def security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' https://avatars.githubusercontent.com data:; "
-        "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://*.supabase.co; "
-        "font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://github.com"
+        "style-src 'self' 'unsafe-inline'; script-src 'self' https://challenges.cloudflare.com; "
+        "connect-src 'self' https://*.supabase.co https://challenges.cloudflare.com; "
+        "frame-src https://challenges.cloudflare.com; font-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'self'; form-action 'self'"
     )
     if request.url.path.startswith("/api/") and "cache-control" not in response.headers:
         response.headers["Cache-Control"] = "no-store"
@@ -215,6 +217,8 @@ app.include_router(config_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(billing_router, prefix="/api")
+app.include_router(account_router, prefix="/api")
+app.include_router(product_events_router, prefix="/api")
 app.include_router(ideas_router, prefix="/api")
 app.include_router(stream_router, prefix="/api")
 

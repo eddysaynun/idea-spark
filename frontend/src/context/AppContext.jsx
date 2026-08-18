@@ -24,18 +24,6 @@ export const AppProvider = ({ children }) => {
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState(null);
 
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('idea_spark_session'));
-      if (saved?.id && Array.isArray(saved.ideas)) {
-        setCurrentSession(saved);
-        setIdeas(saved.ideas);
-      }
-    } catch (error) {
-      logger.warn('Ignoring invalid local session', error);
-    }
-  }, []);
-
   const refreshUser = useCallback(async () => {
     setAuthLoading(true);
     try {
@@ -56,14 +44,6 @@ export const AppProvider = ({ children }) => {
     await authAPI.logout();
     setUser(null);
     setSessions([]);
-  }, []);
-
-  const persistSession = useCallback((session) => {
-    try {
-      localStorage.setItem('idea_spark_session', JSON.stringify(session));
-    } catch (error) {
-      logger.warn('Unable to persist session', error);
-    }
   }, []);
 
   const loadModels = useCallback(async () => {
@@ -88,18 +68,6 @@ export const AppProvider = ({ children }) => {
       logger.error('Failed to load sessions', error);
     }
   }, [user]);
-
-  const importLocalSession = useCallback(async () => {
-    if (!user || !currentSession?.ideas?.length) return false;
-    const key = `local-import-${currentSession.id || crypto.randomUUID()}`;
-    const data = await sessionAPI.importLocal(currentSession, key);
-    if (!data.success) return false;
-    setCurrentSession(data.project);
-    setIdeas(data.project.ideas);
-    persistSession(data.project);
-    await loadSessions();
-    return true;
-  }, [currentSession, loadSessions, persistSession, user]);
 
   const generateIdeas = useCallback(async (direction, count, category, model) => {
     setIsGenerating(true);
@@ -149,7 +117,6 @@ export const AppProvider = ({ children }) => {
             const session = { id: sessionId, direction, count, category, model, ideas: [...collectedIdeas], detailed_plans: {} };
             setIdeas(session.ideas);
             setCurrentSession(session);
-            persistSession(session);
             setProgress({ ...emptyProgress, percent: 100, step: '完成', message: `已生成 ${session.ideas.length} 个机会` });
             break;
           }
@@ -173,7 +140,7 @@ export const AppProvider = ({ children }) => {
       abortRef.current = null;
       setIsGenerating(false);
     }
-  }, [loadSessions, persistSession, refreshUser, user]);
+  }, [loadSessions, refreshUser, user]);
 
   const cancelGeneration = useCallback(() => abortRef.current?.abort(), []);
 
@@ -201,10 +168,9 @@ export const AppProvider = ({ children }) => {
       },
     };
     setCurrentSession(session);
-    persistSession(session);
     await refreshUser();
     return data.detailed_plan;
-  }, [currentIdeaIndex, currentSession, persistSession, refreshUser]);
+  }, [currentIdeaIndex, currentSession, refreshUser]);
 
   const loadSession = useCallback(async (sessionId) => {
     const data = await sessionAPI.getSession(sessionId);
@@ -213,9 +179,8 @@ export const AppProvider = ({ children }) => {
     setCurrentSession(session);
     setIdeas(session.ideas);
     setCurrentIdeaIndex(null);
-    persistSession(session);
     return true;
-  }, [persistSession]);
+  }, []);
 
   const deleteSession = useCallback(async (sessionId) => {
     const data = await sessionAPI.deleteSession(sessionId);
@@ -224,14 +189,13 @@ export const AppProvider = ({ children }) => {
       setCurrentSession(null);
       setIdeas([]);
       setCurrentIdeaIndex(null);
-      localStorage.removeItem('idea_spark_session');
     }
     await loadSessions();
     return true;
   }, [currentSession, loadSessions]);
 
   const value = {
-    authLoading, user, refreshUser, logout, loginUrl: authAPI.loginUrl, importLocalSession,
+    authLoading, user, refreshUser, logout,
     availableModels, loadModels,
     isGenerating, progress, generationError, generateIdeas, cancelGeneration,
     currentSession, currentIdeaIndex, ideas, sessions,

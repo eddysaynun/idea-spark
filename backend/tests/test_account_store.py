@@ -1,8 +1,10 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+import services.account_store as account_store_module
 from services.account_store import AccountStore
 
 
@@ -62,12 +64,13 @@ def store():
     connection.executescript(Path("migrations/0003_purchase_requests.sql").read_text())
     connection.executescript(Path("migrations/0004_payment_orders.sql").read_text())
     connection.executescript(Path("migrations/0005_atomic_quota_reservations.sql").read_text())
+    connection.executescript(Path("migrations/0006_commercial_hardening.sql").read_text())
     yield AccountStore(Database(connection))
     connection.close()
 
 
 async def create_user(store, subject):
-    return await store.upsert_github_user(subject, f"user-{subject}", f"User {subject}", "")
+    return await store.upsert_identity_user("supabase", subject, f"user-{subject}", f"User {subject}", "")
 
 
 def test_quota_migration_preserves_prior_admin_reservation_repairs():
@@ -166,6 +169,79 @@ async def test_session_tokens_are_stored_as_hashes(store):
     assert await store.get_user_by_session("wrong-token") is None
 
 
+async def test_account_deletion_invalidates_sessions_and_can_be_restored_within_seven_days(store, monkeypatch):
+    now = datetime(2026, 8, 18, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(account_store_module, "utc_now", lambda: now)
+    user = await create_user(store, "deletion-restore")
+    token = await store.create_session(user["id"])
+
+    pending = await store.request_account_deletion(user["id"])
+
+    assert pending["status"] == "deletion_pending"
+    assert pending["deletion_due_at"] == "2026-08-25T08:00:00Z"
+    assert await store.get_user_by_session(token) is None
+    restored = await store.restore_account("supabase", "deletion-restore")
+    assert restored["status"] == "active"
+    assert restored["deletion_due_at"] is None
+
+
+async def test_due_account_deletion_retries_identity_failure_then_anonymizes_business_data(store, monkeypatch):
+    now = datetime(2026, 8, 18, 8, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(account_store_module, "utc_now", lambda: now)
+    user = await create_user(store, "deletion-due")
+    project = await store.create_project(user["id"], "待删除方向", 1, "general", "model")
+    await store.complete_project(user["id"], project["id"], [{"name": "private idea"}])
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+    order = await store.create_payment_order(user["id"], package, "alipay")
+    await store.request_account_deletion(user["id"])
+    monkeypatch.setattr(account_store_module, "utc_now", lambda: now + timedelta(days=8))
+
+    async def unavailable(_subject):
+        raise RuntimeError("supabase unavailable")
+
+    first = await store.process_due_deletions(unavailable)
+    assert first == {"processed": 0, "failed": 1}
+    assert (await store._first("SELECT status FROM users WHERE id = ?", user["id"]))["status"] == "deletion_finalizing"
+
+    subjects = []
+    async def available(subject):
+        subjects.append(subject)
+
+    second = await store.process_due_deletions(available)
+    assert second == {"processed": 1, "failed": 0}
+    assert subjects == ["deletion-due"]
+    deleted = await store._first("SELECT * FROM users WHERE id = ?", user["id"])
+    assert deleted["status"] == "deleted"
+    assert deleted["login"].endswith("@deleted.invalid")
+    assert await store._first("SELECT id FROM projects WHERE id = ?", project["id"]) is None
+    assert await store._first("SELECT id FROM payment_orders WHERE id = ?", order["id"])
+
+
+async def test_account_export_contains_only_owned_projects_and_safe_payment_fields(store):
+    alice = await create_user(store, "export-alice")
+    bob = await create_user(store, "export-bob")
+    alice_project = await store.create_project(alice["id"], "Alice 私有方向", 1, "general", "model")
+    bob_project = await store.create_project(bob["id"], "Bob 私有方向", 1, "general", "model")
+    await store.complete_project(alice["id"], alice_project["id"], [{"name": "Alice Idea"}])
+    await store.complete_project(bob["id"], bob_project["id"], [{"name": "Bob Idea"}])
+
+    exported = await store.export_account(alice["id"])
+
+    assert exported["profile"]["login"] == "user-export-alice"
+    assert [project["direction"] for project in exported["projects"]] == ["Alice 私有方向"]
+    assert "provider_subject" not in exported["profile"]
+
+
+async def test_account_export_is_not_truncated_by_history_page_limit(store):
+    user = await create_user(store, "export-all")
+    for index in range(101):
+        await store.create_project(user["id"], f"方向 {index}", 1, "general", "model")
+
+    exported = await store.export_account(user["id"])
+
+    assert len(exported["projects"]) == 101
+
+
 async def test_admin_quota_adjustment_is_bounded_and_audited(store):
     user = await create_user(store, "admin-quota")
 
@@ -204,30 +280,6 @@ async def test_admin_can_clear_stuck_reservation_with_audit(store):
     event = (await store.quota_audit(user["id"]))[0]
     assert event["action"] == "clear_reserved"
     assert event["reserved_before"] == 1
-
-
-async def test_purchase_request_is_user_scoped_and_pending_idempotent(store):
-    alice = await create_user(store, "purchase-alice")
-    bob = await create_user(store, "purchase-bob")
-
-    first = await store.create_purchase_request(alice["id"], "starter", 20, 5)
-    duplicate = await store.create_purchase_request(alice["id"], "starter", 20, 5)
-    await store.create_purchase_request(bob["id"], "builder", 60, 20)
-
-    assert first["id"] == duplicate["id"]
-    assert [item["id"] for item in await store.list_purchase_requests(alice["id"])] == [first["id"]]
-    pending = await store.admin_purchase_requests("pending")
-    assert {item["user_id"] for item in pending} == {alice["id"], bob["id"]}
-
-
-async def test_only_pending_purchase_request_can_change_status(store):
-    user = await create_user(store, "purchase-status")
-    purchase = await store.create_purchase_request(user["id"], "starter", 20, 5)
-
-    fulfilled = await store.update_purchase_request(purchase["id"], "fulfilled")
-    assert fulfilled["status"] == "fulfilled"
-    with pytest.raises(ValueError, match="Pending purchase request not found"):
-        await store.update_purchase_request(purchase["id"], "cancelled")
 
 
 async def test_payment_order_is_owned_and_snapshots_server_package(store):
@@ -275,6 +327,46 @@ async def test_verified_delayed_notification_fulfills_expired_order(store):
     assert refreshed == {"idea_limit": 25, "detail_limit": 7}
 
 
+async def test_full_refund_rejects_consumed_quota_and_reuses_one_request_id(store):
+    user = await create_user(store, "refund-guard")
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+    order = await store.create_payment_order(user["id"], package, "alipay")
+    await store.attach_payment_checkout(user["id"], order["id"], "ISrefundguard", "https://pay.example.test")
+    await store.fulfill_payment(order["id"], "alipay", "paid-refund-guard", "TRADE_SUCCESS", "trade", 2900, "digest", True)
+    await store._run("UPDATE users SET idea_used = 6 WHERE id = ?", user["id"])
+
+    with pytest.raises(ValueError, match="Purchased quota has already been used"):
+        await store.prepare_payment_refund(order["id"])
+
+
+async def test_refund_local_reconciliation_is_retryable_and_deducts_quota_once(store):
+    user = await create_user(store, "refund-reconcile")
+    package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
+    order = await store.create_payment_order(user["id"], package, "alipay")
+    await store.attach_payment_checkout(user["id"], order["id"], "ISrefundretry", "https://pay.example.test")
+    await store.fulfill_payment(order["id"], "alipay", "paid-refund-retry", "TRADE_SUCCESS", "trade", 2900, "digest", True)
+
+    prepared = await store.prepare_payment_refund(order["id"])
+    assert prepared["refund_request_id"].startswith("RF")
+    assert (await store.prepare_payment_refund(order["id"]))["refund_request_id"] == prepared["refund_request_id"]
+    store.db.connection.execute(
+        "CREATE TRIGGER reject_refund_event BEFORE INSERT ON payment_events "
+        "WHEN NEW.event_type = 'REFUND' BEGIN SELECT RAISE(ABORT, 'refund audit failed'); END"
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="refund audit failed"):
+        await store.complete_payment_refund(order["id"], prepared["refund_request_id"], "trade")
+    unchanged = await store._first("SELECT idea_limit, refund_state FROM users JOIN payment_orders ON payment_orders.user_id = users.id WHERE payment_orders.id = ?", order["id"])
+    assert unchanged == {"idea_limit": 25, "refund_state": "pending"}
+
+    store.db.connection.execute("DROP TRIGGER reject_refund_event")
+    first = await store.complete_payment_refund(order["id"], prepared["refund_request_id"], "trade")
+    duplicate = await store.complete_payment_refund(order["id"], prepared["refund_request_id"], "trade")
+    assert first["status"] == "refunded"
+    assert duplicate["status"] == "duplicate"
+    limits = await store._first("SELECT idea_limit, detail_limit FROM users WHERE id = ?", user["id"])
+    assert limits == {"idea_limit": 5, "detail_limit": 2}
+
+
 async def test_payment_order_list_marks_abandoned_orders_expired(store):
     user = await create_user(store, "payment-list-expired")
     package = {"id": "starter", "name": "Starter", "idea_amount": 20, "detail_amount": 5, "amount_fen": 2900}
@@ -311,14 +403,6 @@ async def test_payment_rejects_wrong_channel_or_amount(store, channel, amount):
     assert refreshed["idea_limit"] == 5
 
 
-@pytest.mark.parametrize("return_to", ["//evil.example", "/\\evil.example", "https://evil.example"])
-async def test_oauth_state_rejects_open_redirect_targets(store, return_to):
-    state = await store.create_oauth_state(return_to)
-
-    assert await store.consume_oauth_state(state) == "/"
-    assert await store.consume_oauth_state(state) is None
-
-
 async def test_user_cannot_save_plan_to_another_users_project(store):
     alice = await create_user(store, "plan-alice")
     bob = await create_user(store, "plan-bob")
@@ -328,24 +412,18 @@ async def test_user_cannot_save_plan_to_another_users_project(store):
         await store.save_plan(bob["id"], project["id"], 0, "stolen")
 
 
-async def test_legacy_imports_are_idempotent_and_bounded(store):
-    user = await create_user(store, "imports")
-    payload = {
-        "direction": "旧记录",
-        "count": 1,
-        "category": "general",
-        "model": "model",
-        "ideas": [{"name": "Idea"}],
-        "detailed_plans": {},
-    }
-    first = None
-    for index in range(5):
-        payload["idempotency_key"] = f"legacy-import-key-{index:04d}"
-        project = await store.import_project(user["id"], payload)
-        first = first or project
+async def test_product_events_are_whitelisted_owned_and_idempotent(store):
+    alice = await create_user(store, "event-alice")
+    bob = await create_user(store, "event-bob")
+    project = await store.create_project(alice["id"], "反馈项目", 1, "general", "model")
+    await store.complete_project(alice["id"], project["id"], [{"name": "Idea"}])
 
-    payload["idempotency_key"] = "legacy-import-key-0000"
-    assert (await store.import_project(user["id"], payload))["id"] == first["id"]
-    payload["idempotency_key"] = "legacy-import-key-overflow"
-    with pytest.raises(ValueError, match="最多可导入 5 条"):
-        await store.import_project(user["id"], payload)
+    first = await store.record_product_event(alice["id"], project["id"], 0, "no_value", "event-key-0000001")
+    duplicate = await store.record_product_event(alice["id"], project["id"], 0, "no_value", "event-key-0000001")
+
+    assert first == "recorded"
+    assert duplicate == "duplicate"
+    with pytest.raises(ValueError, match="Project not found"):
+        await store.record_product_event(bob["id"], project["id"], 0, "expand", "event-key-0000002")
+    with pytest.raises(ValueError, match="Invalid product event"):
+        await store.record_product_event(alice["id"], project["id"], 0, "free_text", "event-key-0000003")

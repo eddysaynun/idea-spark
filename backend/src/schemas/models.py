@@ -66,17 +66,6 @@ class DetailResponse(BaseModel):
     detailed_plan: str
 
 
-class ImportProjectRequest(BaseModel):
-    """显式导入旧版浏览器本地探索。"""
-    idempotency_key: str = Field(..., min_length=16, max_length=200)
-    direction: str = Field(..., min_length=2, max_length=500)
-    count: int = Field(..., ge=1, le=12)
-    category: Literal["general", "ai-agent", "dev-tools", "privacy", "productivity"] = "general"
-    model: str = Field(..., min_length=1, max_length=200)
-    ideas: List[IdeaItem] = Field(..., min_length=1, max_length=12)
-    detailed_plans: Dict[str, str] = Field(default_factory=dict)
-
-
 # ============ Session Schema ============
 
 class SessionInfo(BaseModel):

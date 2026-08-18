@@ -54,33 +54,6 @@ class AccountStore:
             raise RuntimeError("Atomic D1 batch support is required")
         return await batch(statements)
 
-    async def create_oauth_state(self, return_to: str = "/") -> str:
-        state = secrets.token_urlsafe(32)
-        now = utc_now()
-        safe_return_to = (
-            return_to
-            if return_to.startswith("/") and not return_to.startswith("//") and "\\" not in return_to
-            else "/"
-        )
-        await self._run(
-            "INSERT INTO oauth_states(state_hash, return_to, expires_at, created_at) VALUES(?, ?, ?, ?)",
-            token_hash(state), safe_return_to, iso(now + timedelta(minutes=10)), iso(now),
-        )
-        return state
-
-    async def consume_oauth_state(self, state: str) -> Optional[str]:
-        hashed = token_hash(state)
-        now = iso(utc_now())
-        row = await self._first(
-            "SELECT return_to FROM oauth_states WHERE state_hash = ? AND expires_at > ?",
-            hashed, now,
-        )
-        await self._run("DELETE FROM oauth_states WHERE state_hash = ?", hashed)
-        return row["return_to"] if row else None
-
-    async def upsert_github_user(self, subject: str, login: str, display_name: str, avatar_url: str) -> Dict[str, Any]:
-        return await self.upsert_identity_user("github", subject, login, display_name, avatar_url)
-
     async def upsert_identity_user(
         self, provider: str, subject: str, login: str, display_name: str, avatar_url: str
     ) -> Dict[str, Any]:
@@ -92,6 +65,8 @@ class AccountStore:
         )
         now = iso(utc_now())
         if existing:
+            if existing.get("status", "active") != "active":
+                return existing
             await self._run(
                 "UPDATE users SET login = ?, display_name = ?, avatar_url = ?, updated_at = ? WHERE id = ?",
                 login, display_name, avatar_url, now, existing["id"],
@@ -118,63 +93,139 @@ class AccountStore:
         if not token:
             return None
         return await self._first(
-            "SELECT u.id, u.login, u.display_name, u.avatar_url, u.idea_limit, u.idea_used, u.idea_reserved, u.detail_limit, u.detail_used, u.detail_reserved FROM user_sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
+            "SELECT u.id, u.login, u.display_name, u.avatar_url, u.idea_limit, u.idea_used, u.idea_reserved, "
+            "u.detail_limit, u.detail_used, u.detail_reserved, u.status, u.deletion_due_at "
+            "FROM user_sessions s JOIN users u ON u.id = s.user_id "
+            "WHERE s.token_hash = ? AND s.expires_at > ? AND u.status = 'active'",
             token_hash(token), iso(utc_now()),
         )
-
-    async def delete_expired_auth_records(self) -> None:
-        """Bound authentication-table growth during normal login traffic."""
-        now = iso(utc_now())
-        await self._run("DELETE FROM oauth_states WHERE expires_at <= ?", now)
-        await self._run("DELETE FROM user_sessions WHERE expires_at <= ?", now)
 
     async def delete_session(self, token: str) -> None:
         if token:
             await self._run("DELETE FROM user_sessions WHERE token_hash = ?", token_hash(token))
 
-    async def create_purchase_request(
-        self, user_id: str, package_id: str, idea_amount: int, detail_amount: int, note: str = ""
-    ) -> Dict[str, Any]:
-        existing = await self._first(
-            "SELECT * FROM quota_purchase_requests WHERE user_id = ? AND package_id = ? AND status = 'pending'",
-            user_id, package_id,
+    async def request_account_deletion(self, user_id: str) -> Dict[str, Any]:
+        user = await self._first("SELECT * FROM users WHERE id = ?", user_id)
+        if not user:
+            raise ValueError("User not found")
+        if user.get("status") == "deletion_pending":
+            return user
+        if user.get("status", "active") != "active":
+            raise ValueError("Account cannot be deleted from its current state")
+        now = utc_now()
+        requested_at = iso(now)
+        due_at = iso(now + timedelta(days=7))
+        await self._batch([
+            self.db.prepare(
+                "UPDATE users SET status = 'deletion_pending', deletion_requested_at = ?, "
+                "deletion_due_at = ?, updated_at = ? WHERE id = ? AND status = 'active'"
+            ).bind(requested_at, due_at, requested_at, user_id),
+            self.db.prepare("DELETE FROM user_sessions WHERE user_id = ?").bind(user_id),
+            self.db.prepare(
+                "INSERT INTO account_deletion_events(id, user_id, action, created_at) VALUES(?, ?, 'requested', ?)"
+            ).bind(str(uuid.uuid4()), user_id, requested_at),
+        ])
+        return await self._first("SELECT * FROM users WHERE id = ?", user_id)
+
+    async def restore_account(self, provider: str, subject: str) -> Dict[str, Any]:
+        user = await self._first(
+            "SELECT * FROM users WHERE provider = ? AND provider_subject = ?", provider, subject
         )
-        if existing:
-            return existing
-        request_id = str(uuid.uuid4())
+        if not user:
+            raise ValueError("User not found")
+        if user.get("status") == "active":
+            return user
         now = iso(utc_now())
-        await self._run(
-            "INSERT INTO quota_purchase_requests(id, user_id, package_id, idea_amount, detail_amount, status, note, created_at, updated_at) "
-            "VALUES(?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
-            request_id, user_id, package_id, idea_amount, detail_amount, note[:300], now, now,
-        )
-        return await self._first("SELECT * FROM quota_purchase_requests WHERE id = ? AND user_id = ?", request_id, user_id)
+        if user.get("status") != "deletion_pending" or not user.get("deletion_due_at") or user["deletion_due_at"] <= now:
+            raise ValueError("Account can no longer be restored")
+        await self._batch([
+            self.db.prepare(
+                "UPDATE users SET status = 'active', deletion_requested_at = NULL, deletion_due_at = NULL, "
+                "updated_at = ? WHERE id = ? AND status = 'deletion_pending'"
+            ).bind(now, user["id"]),
+            self.db.prepare(
+                "INSERT INTO account_deletion_events(id, user_id, action, created_at) VALUES(?, ?, 'restored', ?)"
+            ).bind(str(uuid.uuid4()), user["id"], now),
+        ])
+        return await self._first("SELECT * FROM users WHERE id = ?", user["id"])
 
-    async def list_purchase_requests(self, user_id: str) -> List[Dict[str, Any]]:
-        return await self._all(
-            "SELECT id, package_id, idea_amount, detail_amount, status, note, created_at, updated_at "
-            "FROM quota_purchase_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
-            user_id,
+    async def export_account(self, user_id: str) -> Dict[str, Any]:
+        user = await self._first("SELECT * FROM users WHERE id = ? AND status = 'active'", user_id)
+        if not user:
+            raise ValueError("User not found")
+        project_ids = await self._all(
+            "SELECT id FROM projects WHERE user_id = ? ORDER BY updated_at DESC", user_id
         )
+        projects = [await self.get_project(user_id, item["id"]) for item in project_ids]
+        profile = self.public_user(user)
+        profile.update({"provider": user["provider"], "created_at": user["created_at"]})
+        return {
+            "exported_at": iso(utc_now()),
+            "profile": profile,
+            "projects": projects,
+            "payment_orders": await self._all(
+                "SELECT id, package_id, package_name, idea_amount, detail_amount, amount_fen, currency, "
+                "channel, status, expires_at, paid_at, fulfilled_at, refunded_at, created_at, updated_at "
+                "FROM payment_orders WHERE user_id = ? ORDER BY created_at DESC", user_id,
+            ),
+            "quota_audit": await self._all(
+                "SELECT resource, action, delta, limit_before, limit_after, reserved_before, reserved_after, "
+                "reason, created_at FROM admin_quota_events WHERE user_id = ? ORDER BY created_at DESC", user_id,
+            ),
+        }
 
-    async def admin_purchase_requests(self, status: str = "pending") -> List[Dict[str, Any]]:
-        return await self._all(
-            "SELECT r.id, r.user_id, u.login, u.display_name, r.package_id, r.idea_amount, r.detail_amount, "
-            "r.status, r.note, r.created_at, r.updated_at FROM quota_purchase_requests r "
-            "JOIN users u ON u.id = r.user_id WHERE ? = '' OR r.status = ? ORDER BY r.created_at DESC LIMIT 100",
-            status, status,
+    async def process_due_deletions(self, delete_identity, limit: int = 20) -> Dict[str, int]:
+        now = iso(utc_now())
+        users = await self._all(
+            "SELECT * FROM users WHERE (status = 'deletion_pending' AND deletion_due_at <= ?) "
+            "OR status = 'deletion_finalizing' ORDER BY deletion_due_at LIMIT ?",
+            now, min(max(limit, 1), 100),
         )
-
-    async def update_purchase_request(self, request_id: str, status: str) -> Dict[str, Any]:
-        if status not in {"fulfilled", "cancelled"}:
-            raise ValueError("Invalid purchase request status")
-        result = await self._run(
-            "UPDATE quota_purchase_requests SET status = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
-            status, iso(utc_now()), request_id,
-        )
-        if not self._changed(result):
-            raise ValueError("Pending purchase request not found")
-        return await self._first("SELECT * FROM quota_purchase_requests WHERE id = ?", request_id)
+        processed = 0
+        failed = 0
+        for user in users:
+            if user["status"] == "deletion_pending":
+                await self._batch([
+                    self.db.prepare(
+                        "UPDATE users SET status = 'deletion_finalizing', updated_at = ? "
+                        "WHERE id = ? AND status = 'deletion_pending'"
+                    ).bind(now, user["id"]),
+                    self.db.prepare(
+                        "INSERT INTO account_deletion_events(id, user_id, action, created_at) "
+                        "VALUES(?, ?, 'finalizing', ?)"
+                    ).bind(str(uuid.uuid4()), user["id"], now),
+                ])
+            try:
+                await delete_identity(user["provider_subject"])
+            except Exception as exc:
+                failed += 1
+                await self._run(
+                    "INSERT INTO account_deletion_events(id, user_id, action, detail, created_at) "
+                    "VALUES(?, ?, 'identity_delete_failed', ?, ?)",
+                    str(uuid.uuid4()), user["id"], str(exc)[:300], now,
+                )
+                continue
+            anonymous_login = f"deleted-{user['id']}@deleted.invalid"
+            await self._batch([
+                self.db.prepare("DELETE FROM user_sessions WHERE user_id = ?").bind(user["id"]),
+                self.db.prepare("DELETE FROM projects WHERE user_id = ?").bind(user["id"]),
+                self.db.prepare("DELETE FROM usage_events WHERE user_id = ?").bind(user["id"]),
+                self.db.prepare("DELETE FROM quota_reservations WHERE user_id = ?").bind(user["id"]),
+                self.db.prepare("DELETE FROM quota_purchase_requests WHERE user_id = ?").bind(user["id"]),
+                self.db.prepare("DELETE FROM product_events WHERE user_id = ?").bind(user["id"]),
+                self.db.prepare(
+                    "UPDATE users SET provider = 'deleted', provider_subject = ?, login = ?, "
+                    "display_name = '已注销用户', avatar_url = '', idea_limit = 0, idea_used = 0, "
+                    "idea_reserved = 0, detail_limit = 0, detail_used = 0, detail_reserved = 0, "
+                    "status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?"
+                ).bind(f"deleted:{user['id']}", anonymous_login, now, now, user["id"]),
+                self.db.prepare(
+                    "INSERT INTO account_deletion_events(id, user_id, action, created_at) "
+                    "VALUES(?, ?, 'completed', ?)"
+                ).bind(str(uuid.uuid4()), user["id"], now),
+            ])
+            processed += 1
+        return {"processed": processed, "failed": failed}
 
     async def create_payment_order(
         self, user_id: str, package: Dict[str, Any], channel: str, expires_minutes: int = 15
@@ -251,11 +302,91 @@ class AccountStore:
         return await self._all(
             "SELECT o.id, o.user_id, u.login, u.display_name, o.package_id, o.package_name, o.idea_amount, "
             "o.detail_amount, o.amount_fen, o.currency, o.channel, o.status, o.provider_order_id, "
-            "o.provider_trade_id, o.failure_reason, o.expires_at, o.paid_at, o.fulfilled_at, o.refunded_at, "
+            "o.provider_trade_id, o.failure_reason, o.refund_state, o.refund_request_id, "
+            "o.expires_at, o.paid_at, o.fulfilled_at, o.refunded_at, "
             "o.created_at, o.updated_at FROM payment_orders o JOIN users u ON u.id = o.user_id "
             "WHERE ? = '' OR o.status = ? ORDER BY o.created_at DESC LIMIT 100",
             status, status,
         )
+
+    async def admin_payment_order(self, order_id: str) -> Dict[str, Any]:
+        order = await self._first(
+            "SELECT o.*, u.login, u.display_name, u.idea_limit, u.idea_used, u.idea_reserved, "
+            "u.detail_limit, u.detail_used, u.detail_reserved FROM payment_orders o "
+            "JOIN users u ON u.id = o.user_id WHERE o.id = ?",
+            order_id,
+        )
+        if not order:
+            raise ValueError("Payment order not found")
+        return order
+
+    async def prepare_payment_refund(self, order_id: str) -> Dict[str, Any]:
+        order = await self.admin_payment_order(order_id)
+        if order["status"] == "refunded" and order["refund_state"] == "refunded":
+            return order
+        if order["status"] != "paid" or not order.get("fulfilled_at"):
+            raise ValueError("Only fulfilled payments can be refunded")
+        if order["refund_state"] == "pending":
+            return order
+        if (
+            int(order["idea_limit"]) - int(order["idea_amount"]) < int(order["idea_used"]) + int(order["idea_reserved"])
+            or int(order["detail_limit"]) - int(order["detail_amount"]) < int(order["detail_used"]) + int(order["detail_reserved"])
+        ):
+            raise ValueError("Purchased quota has already been used")
+        refund_request_id = f"RF{order_id.replace('-', '')}"
+        await self._run(
+            "UPDATE payment_orders SET refund_state = 'pending', refund_request_id = ?, updated_at = ? "
+            "WHERE id = ? AND status = 'paid' AND refund_state = 'none'",
+            refund_request_id, iso(utc_now()), order_id,
+        )
+        return await self.admin_payment_order(order_id)
+
+    async def complete_payment_refund(
+        self, order_id: str, refund_request_id: str, provider_trade_id: str
+    ) -> Dict[str, Any]:
+        order = await self.admin_payment_order(order_id)
+        if order["status"] == "refunded" and order["refund_state"] == "refunded":
+            return {"status": "duplicate", "order": order}
+        if order["status"] != "paid" or order["refund_state"] != "pending" or order["refund_request_id"] != refund_request_id:
+            raise ValueError("Payment refund is not prepared")
+        now = iso(utc_now())
+        idea_after = int(order["idea_limit"]) - int(order["idea_amount"])
+        detail_after = int(order["detail_limit"]) - int(order["detail_amount"])
+        await self._batch([
+            self.db.prepare(
+                "UPDATE users SET idea_limit = ?, detail_limit = ?, updated_at = ? WHERE id = ?"
+            ).bind(idea_after, detail_after, now, order["user_id"]),
+            self.db.prepare(
+                "UPDATE payment_orders SET status = 'refunded', refund_state = 'refunded', "
+                "provider_trade_id = ?, refunded_at = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'paid' AND refund_state = 'pending'"
+            ).bind(provider_trade_id, now, now, order_id),
+            self.db.prepare(
+                "INSERT INTO payment_events(id, event_key, order_id, channel, event_type, provider_trade_id, "
+                "amount_fen, verified, payload_digest, processing_status, created_at) "
+                "VALUES(?, ?, ?, ?, 'REFUND', ?, ?, 1, ?, 'processed', ?)"
+            ).bind(
+                str(uuid.uuid4()), f"refund:{refund_request_id}", order_id, order["channel"],
+                provider_trade_id, order["amount_fen"], refund_request_id, now,
+            ),
+            self.db.prepare(
+                "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, "
+                "reserved_before, reserved_after, reason, created_at) "
+                "VALUES(?, ?, 'idea', 'adjust_limit', ?, ?, ?, ?, ?, ?, ?)"
+            ).bind(
+                str(uuid.uuid4()), order["user_id"], -int(order["idea_amount"]), order["idea_limit"], idea_after,
+                order["idea_reserved"], order["idea_reserved"], f"支付宝订单 {order_id} 全额退款", now,
+            ),
+            self.db.prepare(
+                "INSERT INTO admin_quota_events(id, user_id, resource, action, delta, limit_before, limit_after, "
+                "reserved_before, reserved_after, reason, created_at) "
+                "VALUES(?, ?, 'detail', 'adjust_limit', ?, ?, ?, ?, ?, ?, ?)"
+            ).bind(
+                str(uuid.uuid4()), order["user_id"], -int(order["detail_amount"]), order["detail_limit"], detail_after,
+                order["detail_reserved"], order["detail_reserved"], f"支付宝订单 {order_id} 全额退款", now,
+            ),
+        ])
+        return {"status": "refunded", "order": await self.admin_payment_order(order_id)}
 
     async def fulfill_payment(
         self, order_id: str, channel: str, event_key: str, event_type: str,
@@ -435,6 +566,30 @@ class AccountStore:
         result = await self._run("DELETE FROM projects WHERE id = ? AND user_id = ?", project_id, user_id)
         return self._changed(result)
 
+    async def record_product_event(
+        self, user_id: str, project_id: str, idea_index: Optional[int], action: str, idempotency_key: str
+    ) -> str:
+        if action not in {"expand", "detail", "export", "delete", "no_value"}:
+            raise ValueError("Invalid product event")
+        project = await self.get_project(user_id, project_id)
+        if idea_index is not None and not 0 <= idea_index < len(project["ideas"]):
+            raise ValueError("Idea not found")
+        try:
+            await self._run(
+                "INSERT INTO product_events(id, user_id, project_id, idea_index, action, idempotency_key, created_at) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                str(uuid.uuid4()), user_id, project_id, idea_index, action, idempotency_key, iso(utc_now()),
+            )
+        except Exception:
+            prior = await self._first(
+                "SELECT id FROM product_events WHERE user_id = ? AND idempotency_key = ?",
+                user_id, idempotency_key,
+            )
+            if prior:
+                return "duplicate"
+            raise
+        return "recorded"
+
     async def save_plan(self, user_id: str, project_id: str, idea_index: int, content: str) -> None:
         owned = await self._first("SELECT id FROM projects WHERE id = ? AND user_id = ?", project_id, user_id)
         if not owned:
@@ -444,35 +599,6 @@ class AccountStore:
             "INSERT INTO detailed_plans(id, user_id, project_id, idea_index, content_markdown, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, idea_index) DO UPDATE SET content_markdown = excluded.content_markdown, updated_at = excluded.updated_at WHERE user_id = excluded.user_id",
             str(uuid.uuid4()), user_id, project_id, idea_index, content, now, now,
         )
-
-    async def import_project(self, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        prior = await self._first(
-            "SELECT project_id FROM imports WHERE user_id = ? AND idempotency_key = ?",
-            user_id, payload["idempotency_key"],
-        )
-        if prior:
-            return await self.get_project(user_id, prior["project_id"])
-        imported = await self._first(
-            "SELECT COUNT(*) AS count FROM imports WHERE user_id = ?", user_id
-        )
-        if imported and imported["count"] >= 5:
-            raise ValueError("最多可导入 5 条旧版本地记录")
-        project = await self.create_project(
-            user_id, payload["direction"], payload["count"], payload["category"], payload["model"]
-        )
-        await self.complete_project(user_id, project["id"], payload["ideas"])
-        for key, content in payload.get("detailed_plans", {}).items():
-            try:
-                index = int(key)
-            except ValueError:
-                continue
-            if 0 <= index < len(payload["ideas"]) and isinstance(content, str) and content.strip():
-                await self.save_plan(user_id, project["id"], index, content[:100000])
-        await self._run(
-            "INSERT INTO imports(user_id, idempotency_key, project_id, created_at) VALUES(?, ?, ?, ?)",
-            user_id, payload["idempotency_key"], project["id"], iso(utc_now()),
-        )
-        return await self.get_project(user_id, project["id"])
 
     async def reserve_quota(self, user_id: str, reservation_key: str, resource: str, amount: int) -> str:
         if resource not in {"idea", "detail"} or amount < 1:
@@ -526,6 +652,8 @@ class AccountStore:
             "login": user["login"],
             "display_name": user["display_name"],
             "avatar_url": user.get("avatar_url", ""),
+            "status": user.get("status", "active"),
+            "deletion_due_at": user.get("deletion_due_at"),
             "quota": {
                 "idea": {
                     "limit": user.get("idea_limit", 5),

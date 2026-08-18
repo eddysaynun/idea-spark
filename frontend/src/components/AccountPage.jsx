@@ -1,22 +1,23 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, CreditCard, Lightbulb, LoaderCircle, ScrollText } from 'lucide-react';
+import { CheckCircle2, CreditCard, Download, Lightbulb, LoaderCircle, ScrollText, Trash2 } from 'lucide-react';
 
-import { billingAPI } from '../api';
+import { accountAPI, billingAPI } from '../api';
 import { useApp } from '../context/app-context';
 import './AccountPage.css';
 
 const quotaData = (quota) => ({ ...quota, remaining: Math.max(0, quota.limit - quota.used - quota.reserved) });
 
 export default function AccountPage() {
-  const { user, refreshUser } = useApp();
+  const { user, refreshUser, logout } = useApp();
   const [packages, setPackages] = useState([]);
   const [orders, setOrders] = useState([]);
   const [channels, setChannels] = useState({});
-  const [paymentMode, setPaymentMode] = useState('manual_review');
+  const [paymentMode, setPaymentMode] = useState('unavailable');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [returnOrderId, setReturnOrderId] = useState('');
+  const [deletionConfirmation, setDeletionConfirmation] = useState('');
 
   useEffect(() => {
     Promise.all([billingAPI.packages(), billingAPI.orders()]).then(([packageData, orderData]) => {
@@ -76,6 +77,19 @@ export default function AccountPage() {
     finally { setBusy(''); }
   };
 
+  const requestDeletion = async () => {
+    if (deletionConfirmation !== '注销我的账号') return;
+    setBusy('deletion'); setError('');
+    try {
+      const data = await accountAPI.requestDeletion(deletionConfirmation);
+      await logout();
+      window.location.replace(`/login?deletion_due_at=${encodeURIComponent(data.deletion_due_at)}`);
+    } catch (reason) {
+      setError(reason?.response?.data?.detail || '注销申请失败');
+      setBusy('');
+    }
+  };
+
   return <section className="account-page">
     <header className="account-title"><span>ACCOUNT & CREDITS</span><h1>{user.display_name} 的账户</h1><p>{user.login}</p></header>
     <div className="credit-overview"><CreditCard size={23} /><div><strong>{idea.remaining + detail.remaining}</strong><span>当前可用权益</span></div><p>额度由服务端账本记录，生成失败会自动退回预占。</p></div>
@@ -90,6 +104,8 @@ export default function AccountPage() {
       {error && <p className="account-error" role="alert">{error}</p>}
     </section>
     {orders.length > 0 && <section className="request-history"><h2>支付订单</h2>{orders.map((item) => <div key={item.id}><span>{new Date(item.created_at).toLocaleString('zh-CN')}</span><strong>{item.package_name} · ¥{(item.amount_fen / 100).toFixed(2)} · 支付宝</strong><em className={item.status}>{item.status === 'paid' ? '已到账' : item.status === 'pending' ? '待支付' : item.status === 'expired' ? '已过期' : item.status}</em></div>)}</section>}
+    <section className="account-data"><div><h2>数据与账号</h2><p>你可以随时导出账户数据。注销申请有 7 天冷静期，期满后生成内容永久删除。</p></div><button onClick={() => window.location.assign('/api/account/export')}><Download size={16} /> 导出数据</button></section>
+    <section className="account-danger"><div><h2>注销账号</h2><p>提交后立即退出，7 天内重新验证身份可恢复。请输入“注销我的账号”确认。</p></div><input value={deletionConfirmation} onChange={(event) => setDeletionConfirmation(event.target.value)} placeholder="注销我的账号" /><button onClick={requestDeletion} disabled={busy === 'deletion' || deletionConfirmation !== '注销我的账号'}>{busy === 'deletion' ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />} 提交注销</button></section>
   </section>;
 }
 

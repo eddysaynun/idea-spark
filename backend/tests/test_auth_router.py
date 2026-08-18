@@ -2,9 +2,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.testclient import TestClient
 
-from routers.auth_router import TokenExchange, _display_name, _github_profile, exchange_managed_token
+from routers.admin_router import router as admin_router
+import routers.auth_router as auth_router_module
+from routers.auth_router import (
+    TokenExchange,
+    _display_name,
+    exchange_managed_token,
+    providers,
+    router as auth_router,
+)
+from routers.billing_router import router as billing_router
+from routers.ideas_router import router as ideas_router
 
 
 class FetchResponse:
@@ -26,25 +37,27 @@ def test_managed_display_name_prefers_valid_registration_username(metadata, expe
     assert _display_name(metadata, "person@example.com") == expected
 
 
-async def test_github_oauth_uses_worker_native_fetch():
-    calls = []
-
-    async def runtime_fetch(url, **kwargs):
-        calls.append((url, kwargs))
-        if url.endswith("access_token"):
-            return FetchResponse({"access_token": "short-lived-token"})
-        return FetchResponse({"id": 7, "login": "octocat"})
-
+def test_retired_commercial_routes_are_not_registered():
     app = FastAPI()
-    app.state.runtime_fetch = runtime_fetch
-    request = Request({"type": "http", "app": app})
+    app.include_router(auth_router, prefix="/api")
+    app.include_router(billing_router, prefix="/api")
+    app.include_router(admin_router, prefix="/api")
+    app.include_router(ideas_router, prefix="/api")
+    client = TestClient(app)
 
-    profile = await _github_profile(request, "one-time-code", "client-id", "client-secret")
+    requests = [
+        ("get", "/api/auth/login"),
+        ("get", "/api/auth/callback?code=x&state=y"),
+        ("get", "/api/billing/requests"),
+        ("post", "/api/billing/requests"),
+        ("get", "/api/admin/purchase-requests"),
+        ("patch", "/api/admin/purchase-requests/request-1"),
+        ("post", "/api/projects/import"),
+    ]
 
-    assert profile["login"] == "octocat"
-    assert calls[0][1]["method"] == "POST"
-    assert calls[0][1]["body"] == "client_id=client-id&client_secret=client-secret&code=one-time-code"
-    assert calls[1][1]["headers"]["Authorization"] == "Bearer short-lived-token"
+    for method, path in requests:
+        kwargs = {"json": {}} if method in {"post", "patch"} else {}
+        assert getattr(client, method)(path, **kwargs).status_code == 404
 
 
 @pytest.mark.asyncio
@@ -119,3 +132,72 @@ async def test_unverified_email_cannot_receive_app_account():
         await exchange_managed_token(request, TokenExchange(access_token="unverified"), Response())
     assert error.value.status_code == 403
     store.upsert_identity_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pending_deletion_requires_explicit_restore_before_session():
+    store = SimpleNamespace(
+        upsert_identity_user=AsyncMock(return_value={
+            "id": "user-1", "status": "deletion_pending", "deletion_due_at": "2026-08-25T08:00:00Z",
+        }),
+        create_session=AsyncMock(),
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        supabase_url="https://auth.example.test", supabase_anon_key="public-key", account_store=store,
+        runtime_fetch=AsyncMock(return_value=FetchResponse({
+            "id": "managed-1", "email": "person@example.com",
+            "email_confirmed_at": "2026-08-13T00:00:00Z", "user_metadata": {},
+        })),
+    )))
+
+    with pytest.raises(HTTPException) as error:
+        await exchange_managed_token(request, TokenExchange(access_token="managed-token"), Response())
+
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "account_deletion_pending"
+    store.create_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_explicit_restore_revalidates_identity_and_issues_session():
+    restored_user = {
+        "id": "user-1", "login": "person@example.com", "display_name": "Person", "avatar_url": "",
+        "idea_limit": 5, "idea_used": 0, "idea_reserved": 0,
+        "detail_limit": 2, "detail_used": 0, "detail_reserved": 0,
+        "status": "active", "deletion_due_at": None,
+    }
+    store = SimpleNamespace(
+        restore_account=AsyncMock(return_value=restored_user),
+        create_session=AsyncMock(return_value="restored-session"),
+        get_user_by_session=AsyncMock(return_value=restored_user),
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        supabase_url="https://auth.example.test", supabase_anon_key="public-key", account_store=store,
+        runtime_fetch=AsyncMock(return_value=FetchResponse({
+            "id": "managed-1", "email": "person@example.com",
+            "email_confirmed_at": "2026-08-13T00:00:00Z", "user_metadata": {},
+        })),
+    )))
+    response = Response()
+
+    result = await auth_router_module.restore_managed_account(
+        request, TokenExchange(access_token="managed-token"), response
+    )
+
+    assert result["user"]["status"] == "active"
+    store.restore_account.assert_awaited_once_with("supabase", "managed-1")
+    assert "restored-session" in response.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+async def test_provider_config_exposes_turnstile_site_key_but_no_secret():
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        supabase_url="https://auth.example.test", supabase_anon_key="public-key",
+        supabase_providers={"email": True}, turnstile_site_key="public-site-key",
+        turnstile_secret_key="must-not-leak",
+    )))
+
+    result = await providers(request)
+
+    assert result["turnstile_site_key"] == "public-site-key"
+    assert "must-not-leak" not in str(result)

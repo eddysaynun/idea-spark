@@ -89,7 +89,9 @@ IDEA_SPARK_MODEL_TIMEOUT=600
 - Build command：`npm --prefix ../frontend ci && npm --prefix ../frontend run build`
 - Deploy command：`uv run pywrangler deploy`
 - Runtime secrets：`IDEA_SPARK_ADMIN_TOKEN`、模型 Base URL、模型名与 API Key
-- Account secrets：`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`；启用托管多身份登录后再设置 `SUPABASE_URL`、`SUPABASE_ANON_KEY`
+- Account config：`SUPABASE_URL`、`SUPABASE_ANON_KEY`；账号最终删除需要仅服务端可见的 `SUPABASE_SECRET_KEY`
+- Abuse protection：配置 `TURNSTILE_SITE_KEY`，并在 Supabase Auth 中配置对应 Turnstile Secret；Worker 对登录、生成和敏感写操作分别限流
+- Payment：后端通过 Service Binding 调用独立支付宝网关；应用 Worker 只保存内部网关令牌，不保存支付宝私钥
 - D1：`idea-spark-production`（用户、会话、项目、方案与用量账本）
 
 敏感值只配置在 Cloudflare Worker 的 Variables & Secrets 中；仓库与构建变量中不保存明文密钥。Python Workers 目前仍处于 Cloudflare open beta，生产使用前应持续关注运行时兼容性与限制。
@@ -133,12 +135,13 @@ backend/
 
 ## 登录与管理
 
-- GitHub OAuth 可独立使用；配置 Supabase 后支持任意有效邮箱注册、邮箱验证、密码登录，以及动态启用 GitHub、Google、Apple 身份。
+- 账号统一由 Supabase Auth 管理，支持邮箱注册/验证以及部署时启用的 GitHub、Google 等身份；应用不再维护第二套 GitHub OAuth 会话。
 - 邮箱注册支持填写 2–32 位用户名，作为账户显示名；第三方登录沿用已验证 Provider 返回的名称。
-- 登录用户可在顶栏和“账户”页查看 Idea/详细方案的总额、已用、预占和剩余权益。在线支付接入前，额度包使用持久化购买申请并由管理员确认处理，不会自动扣款或伪造支付成功。
+- 登录用户可查看剩余额度，通过支付宝购买额度；支付回调和主动查单共用同一幂等到账逻辑。管理员可查询支付宝订单，并对未消费额度执行整单原路退款。
+- 账户页支持 JSON 数据导出和可恢复注销：申请后立即退出，7 天内重新验证身份可恢复；到期任务删除身份、项目与内容并匿名化必须保留的订单审计数据。
 - 普通用户看不到管理入口。管理员直接访问 `/admin`，输入 `IDEA_SPARK_ADMIN_TOKEN` 后，可按邮箱、用户名或用户 ID 查询账户。
 - 管理台可增加或扣减 Idea/详细方案额度、清理已确认异常的预占额度，并记录操作原因和前后值；管理员令牌只存在于当前页面内存中。
-- 生产启用邮箱、GitHub 和 Google 登录；Apple 登录因需要付费 Apple Developer 账号暂不启用，入口不会展示。
+- 生产启用邮箱、GitHub 和 Google 登录；Apple 登录暂不启用，入口不会展示。
 
 ## 商业权限与数据边界
 
@@ -150,7 +153,9 @@ backend/
 - 模型配置只从部署环境初始化；公网不提供配置读取、修改或探测接口。
 - 未完成的生成项目会标记失败并退回占用额度。
 - 无效或数量不符的模型 JSON 会显式失败，不使用伪造 fallback 结果冒充成功。
-- 历史记录持久化到 D1，并按认证用户隔离；登录后可显式导入旧版浏览器本地记录。
+- 历史记录持久化到 D1，并按认证用户隔离；浏览器不再持久化完整项目或提供旧格式导入入口。
+- 关键操作由 Cloudflare 原生限流绑定约束；注册可启用 Turnstile，限流键只保存会话或 IP 的 SHA-256 摘要。
+- 产品只记录展开、详情、导出、删除与“暂时没价值”等最小行为事件，不采集输入正文作为分析事件。
 
 ## License
 

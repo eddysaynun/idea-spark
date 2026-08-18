@@ -83,7 +83,9 @@ The repository includes a Cloudflare Python Worker configuration that serves the
 - Build command: `npm --prefix ../frontend ci && npm --prefix ../frontend run build`
 - Deploy command: `uv run pywrangler deploy`
 - Runtime secrets: admin token, model Base URL, model name, and API key
-- Account secrets: `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`
+- Account config: `SUPABASE_URL` and `SUPABASE_ANON_KEY`; final identity deletion also requires the server-only `SUPABASE_SECRET_KEY`
+- Abuse protection: set `TURNSTILE_SITE_KEY`, configure the matching Turnstile secret in Supabase Auth, and use the included Worker rate-limit bindings
+- Payments: the application calls a separate Alipay gateway through a Service Binding; the Alipay private key never enters the application Worker
 - D1: `idea-spark-production` for users, sessions, projects, plans, and usage events
 
 Keep secret values in Cloudflare Worker Variables & Secrets, never in the repository or build variables. Cloudflare Python Workers are currently in open beta, so production use should continue to track runtime compatibility and limits.
@@ -100,7 +102,7 @@ This runs frontend lint, Node tests, production build, backend pytest, Python co
 
 ## Commercial access and data boundaries
 
-- GitHub OAuth issues an `HttpOnly`, `Secure`, `SameSite=Lax` server-side session; only its hash is stored.
+- A verified Supabase identity is exchanged for an `HttpOnly`, `Secure`, `SameSite=Lax` application session; only its hash is stored.
 - Server-side D1 usage accounting grants 5 ideas and 2 detailed plans per account by default. Client counters are never trusted for authorization.
 - Generation requires idempotency keys, reserves usage before model work, and refunds failed or interrupted work. Cached detailed plans do not charge twice.
 - Every project, history, and plan query is scoped by authenticated `user_id`.
@@ -108,15 +110,18 @@ This runs frontend lint, Node tests, production build, backend pytest, Python co
 - Model configuration is initialized only from the deployment environment; no public configuration or discovery endpoint is exposed.
 - Workbench requests may only select the configured default model.
 - Invalid model JSON fails explicitly instead of returning fabricated fallback output.
-- History is persisted in D1 and isolated per authenticated user. Users may explicitly import legacy browser-local sessions.
+- History is persisted in D1 and isolated per authenticated user. Full projects are no longer persisted or imported from browser storage.
+- Native Cloudflare bindings rate-limit authentication, generation, and sensitive writes. Turnstile can protect registration without exposing its secret to the browser.
+- Minimal product events cover expand, detail, export, deletion, and “not useful”; event analytics never copy prompt text.
 
 ## Authentication and administration
 
-- GitHub OAuth works independently. When Supabase is configured, any valid email can register and verify an account, while GitHub, Google, and Apple providers can be enabled individually.
+- Supabase Auth is the single identity provider. Valid email registration and deploy-time enabled GitHub or Google login all exchange into the same application session.
 - Email registration accepts a 2–32 character display name. Signed-in users can inspect total, used, reserved, and remaining Idea and detailed-plan credits from the account page.
-- Until online payments are integrated, credit packages create a persistent purchase request for manual review; the product never presents that request as a completed payment.
+- Users can buy credits through Alipay. Signed callbacks and active order queries share one idempotent fulfillment path; administrators can query orders and fully refund purchases whose granted credits remain unused.
+- The account page exports user data as JSON and starts recoverable deletion. Sessions end immediately, sign-in can restore the account for seven days, and the scheduled finalizer deletes content while anonymizing retained payment/audit records.
 - The administration page is hidden from regular navigation. Visit `/admin` directly and authenticate with `IDEA_SPARK_ADMIN_TOKEN` to search users, adjust Idea or detailed-plan limits, repair confirmed stuck reservations, and review the audit history.
-- Production enables email, GitHub, and Google login. Apple login remains disabled because it requires a paid Apple Developer account, so no unavailable action is shown.
+- Production enables email, GitHub, and Google login. Apple remains disabled, so no unavailable action is shown.
 
 ## License
 

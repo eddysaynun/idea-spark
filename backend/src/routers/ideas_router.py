@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from schemas.models import (
     DetailRequest,
     DetailResponse,
-    ImportProjectRequest,
     SessionDetailResponse,
     SessionListResponse,
 )
@@ -15,17 +14,6 @@ from services.auth import current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ideas"])
-
-
-@router.post("/projects/import")
-async def import_project(request: Request, body: ImportProjectRequest, user=Depends(current_user)):
-    payload = body.model_dump()
-    payload["ideas"] = [idea.model_dump() for idea in body.ideas]
-    try:
-        project = await request.app.state.account_store.import_project(user["id"], payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"success": True, "project": project}
 
 
 @router.post("/detail", response_model=DetailResponse)
@@ -74,6 +62,12 @@ async def generate_detail(
         await request.app.state.account_store.settle_quota(
             user["id"], body.session_id, idempotency_key, "detail", 1, True
         )
+        try:
+            await request.app.state.account_store.record_product_event(
+                user["id"], body.session_id, body.idea_index, "detail", f"detail:{idempotency_key}"
+            )
+        except Exception:
+            logger.warning("Unable to record detail product event", exc_info=True)
         return DetailResponse(
             success=True,
             idea=idea_payload,
@@ -116,6 +110,12 @@ async def get_session(session_id: str, request: Request, user=Depends(current_us
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, request: Request, user=Depends(current_user)):
+    try:
+        await request.app.state.account_store.record_product_event(
+            user["id"], session_id, None, "delete", f"delete:{session_id}"
+        )
+    except Exception:
+        logger.warning("Unable to record delete product event", exc_info=True)
     if not await request.app.state.account_store.delete_project(user["id"], session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"success": True}

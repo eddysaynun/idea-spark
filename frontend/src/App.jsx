@@ -7,6 +7,7 @@ import HistoryPage from './components/HistoryPage';
 import LoginPage from './components/LoginPage';
 import AdminPage from './components/AdminPage';
 import AccountPage from './components/AccountPage';
+import LegalPage from './components/LegalPage';
 import { useApp } from './context/app-context';
 import { pageFromPath, pathForPage } from './utils/routes';
 import './App.css';
@@ -50,7 +51,13 @@ function App() {
         {currentPage === 'generate' && <GeneratePage onOpenIdea={openIdea} />}
         {currentPage === 'detail' && <DetailPage onBack={() => navigate('generate')} />}
         {currentPage === 'history' && <HistoryPage onOpenSession={openSession} />}
+        {['privacy', 'terms', 'refund'].includes(currentPage) && <LegalPage page={currentPage} />}
       </main>
+      <footer className="app-footer">
+        <button onClick={() => navigate('privacy')}>隐私政策</button>
+        <button onClick={() => navigate('terms')}>服务条款</button>
+        <button onClick={() => navigate('refund')}>退款政策</button>
+      </footer>
     </div>
   );
 }

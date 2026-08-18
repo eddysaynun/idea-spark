@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, KeyRound, LoaderCircle, Search, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, KeyRound, LoaderCircle, RefreshCw, RotateCcw, Search, ShieldCheck } from 'lucide-react';
 
 import { adminAPI } from '../api';
+import { canRefundOrder } from '../utils/payment';
 import './AdminPage.css';
 
 const errorText = (error) => error?.response?.data?.detail || error?.message || '操作失败，请重试';
@@ -57,8 +58,8 @@ export default function AdminPage() {
   const [selected, setSelected] = useState(null);
   const [events, setEvents] = useState([]);
   const [rechargeRecords, setRechargeRecords] = useState([]);
-  const [purchaseRequests, setPurchaseRequests] = useState([]);
   const [paymentOrders, setPaymentOrders] = useState([]);
+  const [paymentBusy, setPaymentBusy] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -70,7 +71,6 @@ export default function AdminPage() {
     try {
       const data = await adminAPI.users(token, query.trim());
       setUsers(data.users);
-      setPurchaseRequests((await adminAPI.purchaseRequests(token)).requests);
       setPaymentOrders((await adminAPI.paymentOrders(token)).orders);
       if (selected) setSelected(data.users.find((user) => user.id === selected.id) || null);
     } catch (reason) { setError(errorText(reason)); setUsers([]); }
@@ -102,24 +102,17 @@ export default function AdminPage() {
     setRechargeRecords(rechargeData.records);
   };
 
-  const openPurchase = async (purchase) => {
-    setQuery(purchase.login);
-    setBusy(true); setError('');
+  const paymentAction = async (order, action) => {
+    if (action === 'refund' && !window.confirm(`确认全额退回订单 ${order.id}？未使用额度将同时扣回。`)) return;
+    setPaymentBusy(`${action}-${order.id}`); setError(''); setMessage('');
     try {
-      const data = await adminAPI.users(token, purchase.user_id);
-      setUsers(data.users);
-      if (data.users[0]) await choose(data.users[0]);
-      setMessage(`请先为该用户增加 ${purchase.idea_amount} Idea 和 ${purchase.detail_amount} 详细方案，确认后再标记完成。`);
+      const data = action === 'query'
+        ? await adminAPI.queryPayment(token, order.id)
+        : await adminAPI.refundPayment(token, order.id);
+      setPaymentOrders((await adminAPI.paymentOrders(token)).orders);
+      setMessage(action === 'query' ? `查单完成：${data.status}` : `退款处理完成：${data.status}`);
     } catch (reason) { setError(errorText(reason)); }
-    finally { setBusy(false); }
-  };
-
-  const closePurchase = async (purchase, status) => {
-    try {
-      await adminAPI.updatePurchaseRequest(token, purchase.id, status);
-      setPurchaseRequests((current) => current.filter((item) => item.id !== purchase.id));
-      setMessage(status === 'fulfilled' ? '购买申请已标记完成。' : '购买申请已取消。');
-    } catch (reason) { setError(errorText(reason)); }
+    finally { setPaymentBusy(''); }
   };
 
   return <section className="admin-page">
@@ -128,8 +121,7 @@ export default function AdminPage() {
     <form className="admin-search" onSubmit={search}><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="按邮箱、GitHub 用户名、显示名或用户 ID 搜索" /><button disabled={!token || busy}>{busy ? <LoaderCircle className="spin" size={16} /> : '查询'}</button></form>
     {message && <p className="admin-message" role="status">{message}</p>}
     {error && <p className="admin-error" role="alert">{error}</p>}
-    {purchaseRequests.length > 0 && <section className="purchase-admin"><div className="purchase-admin-head"><span>待处理购买申请</span><strong>{purchaseRequests.length}</strong></div>{purchaseRequests.map((item) => <article key={item.id}><div><strong>{item.display_name}</strong><span>{item.login}</span></div><p>{item.idea_amount} Idea + {item.detail_amount} 方案</p><small>{new Date(item.created_at).toLocaleString('zh-CN')}</small><div><button onClick={() => openPurchase(item)}>载入用户</button><button className="done" onClick={() => closePurchase(item, 'fulfilled')}><CheckCircle2 size={14} /> 已加额</button><button className="cancel" onClick={() => closePurchase(item, 'cancelled')}>取消</button></div></article>)}</section>}
-    {paymentOrders.length > 0 && <section className="payment-admin"><div className="purchase-admin-head"><span>支付订单审计</span><strong>{paymentOrders.length}</strong></div>{paymentOrders.map((item) => <article key={item.id}><div><strong>{item.display_name}</strong><span>{item.login}</span></div><p>{item.package_name} · ¥{(item.amount_fen / 100).toFixed(2)}</p><small>{item.channel === 'wechat' ? '微信支付' : '支付宝'} · {item.status}</small><code>{item.id}</code></article>)}</section>}
+    {paymentOrders.length > 0 && <section className="payment-admin"><div className="payment-admin-head"><span>支付订单审计</span><strong>{paymentOrders.length}</strong></div>{paymentOrders.map((item) => <article key={item.id}><div><strong>{item.display_name}</strong><span>{item.login}</span></div><p>{item.package_name} · ¥{(item.amount_fen / 100).toFixed(2)}</p><small>{item.channel === 'wechat' ? '微信支付' : '支付宝'} · {item.status}{item.refund_state === 'pending' ? ' · 退款待对账' : ''}</small><code>{item.id}</code><div className="payment-actions"><button onClick={() => paymentAction(item, 'query')} disabled={!!paymentBusy}>{paymentBusy === `query-${item.id}` ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />} 查单</button>{canRefundOrder(item) && <button className="refund" onClick={() => paymentAction(item, 'refund')} disabled={!!paymentBusy}>{paymentBusy === `refund-${item.id}` ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />} 全额退款</button>}</div></article>)}</section>}
     <div className="admin-workspace">
       <aside className="user-results">
         <div className="user-results-head"><span>用户</span><strong>{users.length}</strong></div>

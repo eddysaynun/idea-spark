@@ -2,9 +2,15 @@ import { useEffect, useState } from 'react';
 import { Apple, ArrowLeft, LoaderCircle, Mail } from 'lucide-react';
 
 import { authAPI } from '../api';
+import { pendingDeletionFrom } from '../utils/account';
+import { registrationOptions } from '../utils/auth';
+import Turnstile from './Turnstile';
 import './LoginPage.css';
 
-const messageFrom = (error) => error?.message || error?.response?.data?.detail || '登录没有完成，请重试';
+const messageFrom = (error) => {
+  const detail = error?.response?.data?.detail;
+  return error?.message || (typeof detail === 'string' ? detail : '') || '登录没有完成，请重试';
+};
 const AUTH_STORAGE_KEY = 'idea-spark-managed-auth';
 
 const withTimeout = (promise, milliseconds, message) => Promise.race([
@@ -90,6 +96,9 @@ export default function LoginPage({ onComplete }) {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [supabase, setSupabase] = useState(null);
+  const [pendingDeletion, setPendingDeletion] = useState(null);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaAttempt, setCaptchaAttempt] = useState(0);
 
   useEffect(() => {
     authAPI.providers().then(setConfig).catch((reason) => setError(messageFrom(reason)));
@@ -112,7 +121,14 @@ export default function LoginPage({ onComplete }) {
     setError('');
     completeManagedCallback(supabase, (stage) => active && setNotice(stage)).then(() => {
       if (active) window.location.replace('/');
-    }).catch((reason) => active && setError(messageFrom(reason))).finally(() => active && setBusy(false));
+    }).catch((reason) => {
+      if (!active) return;
+      const pending = pendingDeletionFrom(reason);
+      if (pending) {
+        setPendingDeletion(pending);
+        setNotice(`账号将在 ${new Date(pending.deletion_due_at).toLocaleString('zh-CN')} 永久删除。`);
+      } else setError(messageFrom(reason));
+    }).finally(() => active && setBusy(false));
     return () => { active = false; };
   }, [supabase]);
 
@@ -124,10 +140,9 @@ export default function LoginPage({ onComplete }) {
       if (mode === 'register') {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email, password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback`,
-            data: { username: username.trim() },
-          },
+          options: registrationOptions(
+            username, captchaToken, `${window.location.origin}/auth/callback`,
+          ),
         });
         if (signUpError) throw signUpError;
         if (!data.session) {
@@ -140,6 +155,30 @@ export default function LoginPage({ onComplete }) {
         if (loginError) throw loginError;
         await authAPI.exchange(data.session.access_token);
       }
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      window.location.replace('/');
+    } catch (reason) {
+      const pending = pendingDeletionFrom(reason);
+      if (pending) {
+        setPendingDeletion(pending);
+        setNotice(`账号将在 ${new Date(pending.deletion_due_at).toLocaleString('zh-CN')} 永久删除。`);
+      } else setError(messageFrom(reason));
+    } finally {
+      if (mode === 'register') {
+        setCaptchaToken('');
+        setCaptchaAttempt((value) => value + 1);
+      }
+      setBusy(false);
+    }
+  };
+
+  const restoreAccount = async () => {
+    if (!supabase) return;
+    setBusy(true); setError('');
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !data.session) throw sessionError || new Error('登录凭据已过期，请重新登录');
+      await authAPI.restore(data.session.access_token);
       window.localStorage.removeItem(AUTH_STORAGE_KEY);
       window.location.replace('/');
     } catch (reason) {
@@ -185,19 +224,20 @@ export default function LoginPage({ onComplete }) {
             {mode === 'register' && <label>用户名<input type="text" autoComplete="nickname" value={username} onChange={(e) => setUsername(e.target.value)} required minLength="2" maxLength="32" pattern="[\p{L}\p{N}_\- ]+" placeholder="你的公开显示名称" /></label>}
             <label>邮箱<input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@example.com" /></label>
             <label>密码<input type="password" minLength="8" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="至少 8 位" /></label>
-            <button className="login-primary" disabled={busy}>{busy ? <LoaderCircle className="spin" size={18} /> : <Mail size={18} />}{mode === 'register' ? '创建账号' : '使用邮箱登录'}</button>
+            {mode === 'register' && config?.turnstile_site_key && <Turnstile key={captchaAttempt} siteKey={config.turnstile_site_key} onToken={setCaptchaToken} />}
+            <button className="login-primary" disabled={busy || (mode === 'register' && config?.turnstile_site_key && !captchaToken)}>{busy ? <LoaderCircle className="spin" size={18} /> : <Mail size={18} />}{mode === 'register' ? '创建账号' : '使用邮箱登录'}</button>
           </form>}
-          {(config?.github || enabled.google || enabled.apple) && <div className="login-divider"><span>或者</span></div>}
+          {(enabled.github || enabled.google || enabled.apple) && <div className="login-divider"><span>或者</span></div>}
           <div className="login-providers">
             {enabled.github && <button onClick={() => oauth('github')} disabled={busy}><GitHubIcon /> GitHub</button>}
-            {config?.github && <a href={authAPI.loginUrl('/')}><GitHubIcon /> GitHub</a>}
             {enabled.google && <button onClick={() => oauth('google')} disabled={busy}><GoogleIcon /> Google</button>}
             {enabled.apple && <button onClick={() => oauth('apple')} disabled={busy}><Apple size={18} /> Apple</button>}
           </div>
-          {!config?.supabase?.configured && <p className="login-setup">邮箱、Google 和 Apple 登录正在配置中；GitHub 登录已经可用。</p>}
+          {!config?.supabase?.configured && <p className="login-setup">登录服务正在配置中，请稍后再试。</p>}
           {notice && <p className="login-notice" role="status">{notice}</p>}
+          {pendingDeletion && <button className="login-primary" onClick={restoreAccount} disabled={busy}>恢复账号并继续使用</button>}
           {error && <p className="login-error" role="alert">{error}</p>}
-          <p className="login-terms">注册即表示你同意仅将账号用于保存自己的生成记录。邮箱需验证后才能领取免费额度。</p>
+          <p className="login-terms">注册即表示你同意<a href="/terms">服务条款</a>与<a href="/privacy">隐私政策</a>。邮箱需验证后才能领取免费额度。</p>
         </div>
       </div>
     </section>
