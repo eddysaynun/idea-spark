@@ -10,7 +10,7 @@
   ],
   "keep_vars": true,
   "python_modules": {
-    "excludes": [
+    "exclude": [
       "**/*.pyc",
       "**/__pycache__",
       "**/*.pyi",
